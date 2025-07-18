@@ -1,0 +1,34 @@
+{
+  "name": "transfert_rcp_fr",
+  "version": "1.0.0",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "test": "vitest",
+    "build": "tsc",
+    "start": "node dist/main.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "devDependencies": {
+    "@types/logrotate-stream": "^0.2.34",
+    "@types/node": "^24.0.13",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4"
+  },
+  "dependencies": {
+    "dotenv": "^17.2.0",
+    "exceljs": "^4.4.0",
+    "knex": "^3.1.0",
+    "logrotate-stream": "^0.2.9",
+    "mysql2": "^3.14.2",
+    "pino": "^9.7.0",
+    "pino-pretty": "^13.0.0",
+    "sqlite": "^5.1.1",
+    "sqlite3": "^5.1.7",
+    "ssh2-sftp-client": "^12.0.1"
+  }
+}
