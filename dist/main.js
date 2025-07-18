@@ -7,7 +7,11 @@ import knex from 'knex';
 // @ts-ignore
 import knexConfig from '../knexfile.cjs';
 import fs from 'fs/promises';
+import fsSync from 'fs';
+import path from 'path';
 import { exportListeFichiersCopiesExcel } from './export_excel.js';
+import { transferFichierSFTP } from './sftp_transfert.js';
+import { exportListeFichiersCopiesCleyropExcel } from './export_excel_cleyrop.js';
 const db = knex(knexConfig.development);
 dotenv.config({ debug: false });
 async function main() {
@@ -64,6 +68,10 @@ async function main() {
                 resultat_copie_sftp: null, // 'FICHIER_COPIE' ou 'FICHIER_DEJA_PRESENT'
                 id_batch: idBatch
             });
+            // Transfert SFTP après la copie locale
+            const localPath = path.join(repCible, nouveauNom);
+            const remoteSubDir = path.basename(repCible); // ex: Extract_RCP_20250718
+            await transferFichierSFTP(localPath, remoteSubDir, nouveauNom, idBatch, rcp.code_cis, rcp.dbo_classe_atc_lib_abr, db);
             if (iCpt >= 10) {
                 console.log('Mode debug : arrêt après 10 fichiers');
                 logger.info('Mode debug : arrêt après 10 fichiers');
@@ -85,12 +93,59 @@ async function main() {
         await closePoolCodexExtract();
         logger.info('Fin traitement');
         if (repCible && idBatch) {
+            // Export Excel complet (local uniquement)
             const excelFilePath = await exportListeFichiersCopiesExcel(db, idBatch, repCible, dateFileStr);
             if (excelFilePath) {
                 logger.info(`Export Excel généré : ${excelFilePath}`);
             }
             else {
                 logger.info('Aucune ligne à exporter pour ce batch.');
+            }
+            // Export Excel cleyrop (colonnes réduites)
+            const cleyropExcelFilePath = await exportListeFichiersCopiesCleyropExcel(db, idBatch, repCible, dateFileStr);
+            let cleyropExported = false;
+            // Boucle de retry SFTP sur les KO
+            const retryCount = parseInt(process.env.SFTP_RETRY_COUNT || '3', 10);
+            let essais = 0;
+            let encoreDesKO = true;
+            while (essais < retryCount && encoreDesKO) {
+                const lignesKO = await db('liste_fichiers_copies')
+                    .where({ id_batch: idBatch, resultat_copie_sftp: 'COPIE SFTP KO' });
+                if (lignesKO.length === 0) {
+                    encoreDesKO = false;
+                    break;
+                }
+                for (const ligne of lignesKO) {
+                    const localPath = path.join(repCible, ligne.nom_fichier_cible);
+                    if (!fsSync.existsSync(localPath)) {
+                        await db('liste_fichiers_copies')
+                            .where({ id: ligne.id })
+                            .update({ resultat_copie_sftp: 'FICHIER LOCAL INEXISTANT' });
+                        logger.warn(`Fichier local inexistant pour ${ligne.nom_fichier_cible}`);
+                        continue;
+                    }
+                    await transferFichierSFTP(localPath, path.basename(repCible), ligne.nom_fichier_cible, idBatch, ligne.code_cis, ligne.code_atc, db);
+                }
+                essais++;
+            }
+            // Export SFTP du fichier cleyrop uniquement s'il n'y a plus de KO
+            const lignesKOrestantes = await db('liste_fichiers_copies')
+                .where({ id_batch: idBatch, resultat_copie_sftp: 'COPIE SFTP KO' });
+            if (cleyropExcelFilePath && lignesKOrestantes.length === 0) {
+                const remoteSubDir = path.basename(repCible);
+                const cleyropExcelFileName = path.basename(cleyropExcelFilePath);
+                try {
+                    await transferFichierSFTP(cleyropExcelFilePath, remoteSubDir, cleyropExcelFileName, idBatch, '', // codeCIS vide pour l'Excel
+                    '', // codeATC vide pour l'Excel
+                    db);
+                    logger.info(`Export Excel cleyrop transféré sur le SFTP : ${remoteSubDir}/${cleyropExcelFileName}`);
+                }
+                catch (err) {
+                    logger.error({ err }, 'Erreur lors du transfert SFTP du fichier Excel cleyrop');
+                }
+            }
+            else if (cleyropExcelFilePath) {
+                logger.warn('Des fichiers sont encore en échec SFTP, export cleyrop non transféré.');
             }
         }
         await db.destroy(); // <-- doit rester en dernier
