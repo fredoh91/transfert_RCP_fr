@@ -107,9 +107,17 @@ async function main() {
     process.exit(1);
   } finally {
     if (idBatchRowId !== undefined) {
+      const finBatch = new Date();
+      // Récupérer debut_batch pour calculer la durée
+      const row = await db('liste_id_batch').where({ id: idBatchRowId }).first();
+      let tempTraitement = null;
+      if (row && row.debut_batch) {
+        const debutBatch = new Date(row.debut_batch);
+        tempTraitement = Math.round((finBatch.getTime() - debutBatch.getTime()) / 1000); // en secondes
+      }
       await db('liste_id_batch')
         .where({ id: idBatchRowId })
-        .update({ fin_batch: new Date().toISOString() });
+        .update({ fin_batch: finBatch.toISOString(), temp_traitement: tempTraitement });
     }
     // Enregistrement de la date de fin et du nombre de tables extraites
     await closePoolCodexExtract();
