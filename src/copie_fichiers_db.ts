@@ -33,14 +33,26 @@ export async function initCopieFichiersDB() {
 
 export async function logCopieFichier(row: Omit<ListeFichiersCopiesRow, 'id'>) {
   if (!db) await initCopieFichiersDB();
-  await db.run(
-    `INSERT INTO liste_fichiers_copies (
-      rep_fichier_source, nom_fichier_source, rep_fichier_cible, nom_fichier_cible, code_cis, code_atc,
-      date_copie_rep_tempo, resultat_copie_rep_tempo, date_copie_sftp, resultat_copie_sftp, id_batch
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    row.rep_fichier_source, row.nom_fichier_source, row.rep_fichier_cible, row.nom_fichier_cible, row.code_cis, row.code_atc,
-    row.date_copie_rep_tempo, row.resultat_copie_rep_tempo, row.date_copie_sftp, row.resultat_copie_sftp, row.id_batch
-  );
+  const hasTypeDocument = 'type_document' in row;
+  if (hasTypeDocument) {
+    await db.run(
+      `INSERT INTO liste_fichiers_copies (
+        rep_fichier_source, nom_fichier_source, rep_fichier_cible, nom_fichier_cible, code_cis, code_atc,
+        date_copie_rep_tempo, resultat_copie_rep_tempo, date_copie_sftp, resultat_copie_sftp, id_batch, type_document
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      row.rep_fichier_source, row.nom_fichier_source, row.rep_fichier_cible, row.nom_fichier_cible, row.code_cis, row.code_atc,
+      row.date_copie_rep_tempo, row.resultat_copie_rep_tempo, row.date_copie_sftp, row.resultat_copie_sftp, row.id_batch, row.type_document
+    );
+  } else {
+    await db.run(
+      `INSERT INTO liste_fichiers_copies (
+        rep_fichier_source, nom_fichier_source, rep_fichier_cible, nom_fichier_cible, code_cis, code_atc,
+        date_copie_rep_tempo, resultat_copie_rep_tempo, date_copie_sftp, resultat_copie_sftp, id_batch
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      row.rep_fichier_source, row.nom_fichier_source, row.rep_fichier_cible, row.nom_fichier_cible, row.code_cis, row.code_atc,
+      row.date_copie_rep_tempo, row.resultat_copie_rep_tempo, row.date_copie_sftp, row.resultat_copie_sftp, row.id_batch
+    );
+  }
 } 
 
 

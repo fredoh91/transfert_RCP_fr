@@ -68,3 +68,35 @@ export async function getListeRCP(pool) {
         }
     }
 }
+export async function getListeNotice(pool) {
+    let connection = null;
+    try {
+        connection = await pool.getConnection();
+        const query = `
+            SELECT v.code_cis,
+                   v.nom_vu,
+                   v.dbo_autorisation_lib_abr,
+                   v.dbo_classe_atc_lib_abr,
+                   v.dbo_classe_atc_lib_court,
+                   mh.doc_id,
+                   mh.hname
+            FROM vuutil v
+            INNER JOIN mocatordocument_html mh ON v.code_vu = mh.spec_id
+            WHERE v.dbo_statut_speci_lib_abr = 'Actif'
+              AND LEFT(mh.hname, 1) = 'N';
+        `;
+        const [rows] = await connection.execute(query);
+        logger.info(`Nombre de notices retournees : ${rows.length}`);
+        console.log(`Nombre de notices retournees : ${rows.length}`);
+        return rows;
+    }
+    catch (error) {
+        logger.error({ err: error }, 'Erreur lors de la recuperation de la liste des Notices');
+        throw error;
+    }
+    finally {
+        if (connection) {
+            connection.release();
+        }
+    }
+}

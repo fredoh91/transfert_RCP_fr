@@ -11,4 +11,5 @@ export type ListeFichiersCopiesRow = {
   date_copie_sftp?: string | Date | null; // DATETIME, nullable
   resultat_copie_sftp?: string | null;
   id_batch?: string;
+  type_document?: string | null;
 }; 

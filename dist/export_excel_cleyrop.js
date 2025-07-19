@@ -8,6 +8,7 @@ const CLEYROP_COLUMNS = [
     'date_copie_sftp',
     'resultat_copie_sftp',
     'id_batch',
+    'type_document',
 ];
 /**
  * Exporte les lignes de la table liste_fichiers_copies pour un id_batch donné dans un fichier Excel Cleyrop (colonnes réduites).

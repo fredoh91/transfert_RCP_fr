@@ -10,6 +10,7 @@ const CLEYROP_COLUMNS = [
   'date_copie_sftp',
   'resultat_copie_sftp',
   'id_batch',
+  'type_document',
 ];
 
 /**

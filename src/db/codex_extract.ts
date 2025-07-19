@@ -39,7 +39,7 @@ export async function closePoolCodexExtract(): Promise<void> {
     }
 }
 
-export async function getListeRCP(pool: mysql.Pool): Promise<ListeRCPRow[]> {
+export async function getListeDocuments(pool: mysql.Pool, type: 'R' | 'N'): Promise<ListeRCPRow[]> {
     let connection: mysql.PoolConnection | null = null;
     try {
         connection = await pool.getConnection();
@@ -54,14 +54,13 @@ export async function getListeRCP(pool: mysql.Pool): Promise<ListeRCPRow[]> {
             FROM vuutil v
             INNER JOIN mocatordocument_html mh ON v.code_vu = mh.spec_id
             WHERE v.dbo_statut_speci_lib_abr = 'Actif'
-              AND LEFT(mh.hname, 1) = 'R';
+              AND LEFT(mh.hname, 1) = ?;
         `;
-        const [rows] = await connection.execute(query);
-        logger.info(`Nombre de lignes retournees : ${(rows as ListeRCPRow[]).length}`);
-        console.log(`Nombre de lignes retournees : ${(rows as ListeRCPRow[]).length}`);
+        const [rows] = await connection.execute(query, [type]);
+        logger.info(`Nombre de documents (${type}) retournes : ${(rows as ListeRCPRow[]).length}`);
         return rows as ListeRCPRow[];
     } catch (error) {
-        logger.error({ err: error }, 'Erreur lors de la recuperation de la liste des RCP');
+        logger.error({ err: error }, `Erreur lors de la recuperation de la liste des documents (${type})`);
         throw error;
     } finally {
         if (connection) {
@@ -69,3 +68,7 @@ export async function getListeRCP(pool: mysql.Pool): Promise<ListeRCPRow[]> {
         }
     }
 }
+
+// Pour compatibilité avec le reste du code
+export const getListeRCP = (pool: mysql.Pool) => getListeDocuments(pool, 'R');
+export const getListeNotice = (pool: mysql.Pool) => getListeDocuments(pool, 'N');

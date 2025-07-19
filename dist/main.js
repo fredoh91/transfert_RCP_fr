@@ -1,5 +1,5 @@
 import dotenv from 'dotenv';
-import { createPoolCodexExtract, closePoolCodexExtract, getListeRCP } from './db/codex_extract.js';
+import { createPoolCodexExtract, closePoolCodexExtract, getListeRCP, getListeNotice } from './db/codex_extract.js';
 import { logger } from './logs_config.js';
 import { copierFichierRCP, verifierCopieFichier } from './gestion_fichiers.js';
 import { logCopieFichier } from './copie_fichiers_db.js';
@@ -24,8 +24,14 @@ async function main() {
     const dateDirStr = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`;
     const dateFileStr = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
     const repCible = baseRepCible ? `${baseRepCible}/Extract_RCP_${dateDirStr}` : undefined;
+    const repCibleRCP = repCible ? path.join(repCible, 'RCP') : undefined;
+    const repCibleNotices = repCible ? path.join(repCible, 'Notices') : undefined;
     if (repCible) {
         await fs.mkdir(repCible, { recursive: true });
+        if (repCibleRCP)
+            await fs.mkdir(repCibleRCP, { recursive: true });
+        if (repCibleNotices)
+            await fs.mkdir(repCibleNotices, { recursive: true });
     }
     const idBatch = now.getFullYear().toString() +
         pad(now.getMonth() + 1) +
@@ -43,39 +49,68 @@ async function main() {
         })
             .returning('id')
             .then((ids) => {
-            // Pour SQLite, ids est un array d'objets ou de nombres selon la config
             idBatchRowId = typeof ids[0] === 'object' ? ids[0].id : ids[0];
         });
-        // requete pour aller chercher la liste des RCP
+        // --- TRAITEMENT RCP ---
         const listeRcp = await getListeRCP(poolCodexExtract);
-        let iCpt = 0;
+        let iCptRCP = 0;
         for (const rcp of listeRcp) {
-            iCpt++;
-            // console.log (iCpt);
-            // console.log (rcp.hname, '_' , rcp.code_cis, '_' , rcp.dbo_classe_atc_lib_abr)
-            const { statut, nouveauNom } = await copierFichierRCP(rcp.hname, rcp.code_cis, rcp.dbo_classe_atc_lib_abr, repCible);
-            const copieOK = await verifierCopieFichier(rcp.hname, rcp.code_cis, rcp.dbo_classe_atc_lib_abr, repCible);
+            iCptRCP++;
+            const { statut, nouveauNom } = await copierFichierRCP(rcp.hname, rcp.code_cis, rcp.dbo_classe_atc_lib_abr, repCibleRCP);
+            const copieOK = await verifierCopieFichier(rcp.hname, rcp.code_cis, rcp.dbo_classe_atc_lib_abr, repCibleRCP);
             await logCopieFichier({
                 rep_fichier_source: repSource,
                 nom_fichier_source: rcp.hname,
-                rep_fichier_cible: repCible,
+                rep_fichier_cible: repCibleRCP,
                 nom_fichier_cible: nouveauNom,
                 code_cis: rcp.code_cis,
                 code_atc: rcp.dbo_classe_atc_lib_abr,
                 date_copie_rep_tempo: new Date().toISOString(),
-                resultat_copie_rep_tempo: copieOK, // 'FICHIER_COPIE' ou 'FICHIER_DEJA_PRESENT'
+                resultat_copie_rep_tempo: copieOK,
                 date_copie_sftp: null,
-                resultat_copie_sftp: null, // 'FICHIER_COPIE' ou 'FICHIER_DEJA_PRESENT'
-                id_batch: idBatch
+                resultat_copie_sftp: null,
+                id_batch: idBatch,
+                type_document: 'RCP'
             });
             // Transfert SFTP après la copie locale
-            const localPath = path.join(repCible, nouveauNom);
-            const remoteSubDir = path.basename(repCible); // ex: Extract_RCP_20250718
+            const localPath = path.join(repCibleRCP, nouveauNom);
+            const remoteSubDir = path.posix.join(path.basename(repCible), 'RCP');
             await transferFichierSFTP(localPath, remoteSubDir, nouveauNom, idBatch, rcp.code_cis, rcp.dbo_classe_atc_lib_abr, db);
-            if (iCpt >= 10) {
-                console.log('Mode debug : arrêt après 10 fichiers');
-                logger.info('Mode debug : arrêt après 10 fichiers');
-                return;
+            if (iCptRCP >= 10) {
+                console.log('Mode debug : arrêt après 10 fichiers RCP');
+                logger.info('Mode debug : arrêt après 10 fichiers RCP');
+                break;
+            }
+        }
+        // --- TRAITEMENT NOTICES ---
+        const listeNotices = await getListeNotice(poolCodexExtract);
+        let iCptNotice = 0;
+        for (const notice of listeNotices) {
+            iCptNotice++;
+            const { statut, nouveauNom } = await copierFichierRCP(notice.hname, notice.code_cis, notice.dbo_classe_atc_lib_abr, repCibleNotices);
+            const copieOK = await verifierCopieFichier(notice.hname, notice.code_cis, notice.dbo_classe_atc_lib_abr, repCibleNotices);
+            await logCopieFichier({
+                rep_fichier_source: repSource,
+                nom_fichier_source: notice.hname,
+                rep_fichier_cible: repCibleNotices,
+                nom_fichier_cible: nouveauNom,
+                code_cis: notice.code_cis,
+                code_atc: notice.dbo_classe_atc_lib_abr,
+                date_copie_rep_tempo: new Date().toISOString(),
+                resultat_copie_rep_tempo: copieOK,
+                date_copie_sftp: null,
+                resultat_copie_sftp: null,
+                id_batch: idBatch,
+                type_document: 'Notice'
+            });
+            // Transfert SFTP après la copie locale
+            const localPath = path.join(repCibleNotices, nouveauNom);
+            const remoteSubDir = path.posix.join(path.basename(repCible), 'Notices');
+            await transferFichierSFTP(localPath, remoteSubDir, nouveauNom, idBatch, notice.code_cis, notice.dbo_classe_atc_lib_abr, db);
+            if (iCptNotice >= 10) {
+                console.log('Mode debug : arrêt après 10 fichiers Notices');
+                logger.info('Mode debug : arrêt après 10 fichiers Notices');
+                break;
             }
         }
     }
