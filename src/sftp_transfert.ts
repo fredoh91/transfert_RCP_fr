@@ -51,10 +51,17 @@ export async function transferFichierSFTP(
     // Créer le dossier distant si besoin
     try {
       logger.info(`Création du répertoire distant: ${remoteDir}`);
-      await sftp.mkdir(remoteDir, true); // true = recursive
+      await sftp.mkdir(remoteDir, true);
       logger.info('Répertoire distant créé avec succès');
     } catch (err) {
-      logger.info('Répertoire distant déjà existant');
+      logger.error({ err }, `Erreur lors de la création du répertoire distant: ${remoteDir}`);
+    }
+    // Vérifier l'existence du répertoire
+    const dirExists = await sftp.exists(remoteDir);
+    if (!dirExists) {
+      logger.error(`Le répertoire distant ${remoteDir} n'existe pas après tentative de création. Arrêt du script.`);
+      await sftp.end();
+      throw new Error(`Répertoire distant non créé: ${remoteDir}`);
     }
     
     // Transférer le fichier
