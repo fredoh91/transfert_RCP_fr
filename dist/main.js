@@ -76,7 +76,7 @@ async function main() {
             const localPath = path.join(repCibleRCP, nouveauNom);
             const remoteSubDir = path.posix.join(path.basename(repCible), 'RCP');
             await transferFichierSFTP(localPath, remoteSubDir, nouveauNom, idBatch, rcp.code_cis, rcp.dbo_classe_atc_lib_abr, db);
-            if (iCptRCP >= 10) {
+            if (iCptRCP >= 10 && process.env.TYPE_EXECUTION === 'Dev') {
                 console.log('Mode debug : arrêt après 10 fichiers RCP');
                 logger.info('Mode debug : arrêt après 10 fichiers RCP');
                 break;
@@ -107,7 +107,7 @@ async function main() {
             const localPath = path.join(repCibleNotices, nouveauNom);
             const remoteSubDir = path.posix.join(path.basename(repCible), 'Notices');
             await transferFichierSFTP(localPath, remoteSubDir, nouveauNom, idBatch, notice.code_cis, notice.dbo_classe_atc_lib_abr, db);
-            if (iCptNotice >= 10) {
+            if (iCptNotice >= 10 && process.env.TYPE_EXECUTION === 'Dev') {
                 console.log('Mode debug : arrêt après 10 fichiers Notices');
                 logger.info('Mode debug : arrêt après 10 fichiers Notices');
                 break;
