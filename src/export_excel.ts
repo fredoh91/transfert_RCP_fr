@@ -1,6 +1,7 @@
 import ExcelJS from 'exceljs';
 import path from 'path';
 import { Knex } from 'knex';
+import { applyExcelFormatting } from './excel_formatter.js';
 
 /**
  * Exporte les lignes de la table liste_fichiers_copies pour un id_batch donné dans un fichier Excel.
@@ -18,6 +19,8 @@ export async function exportListeFichiersCopiesExcel(db: Knex, idBatch: string, 
   const worksheet = workbook.addWorksheet('Copies');
   worksheet.columns = Object.keys(rows[0]).map(key => ({ header: key, key }));
   rows.forEach(row => worksheet.addRow(row));
+
+  applyExcelFormatting(worksheet);
 
   const excelFileName = `transfert_RCP_fr_${dateFileStr}.xlsx`;
   const excelFilePath = path.join(repCible, excelFileName);

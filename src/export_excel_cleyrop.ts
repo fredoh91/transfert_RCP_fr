@@ -1,6 +1,7 @@
 import ExcelJS from 'exceljs';
 import path from 'path';
 import { Knex } from 'knex';
+import { applyExcelFormatting } from './excel_formatter.js';
 
 const CLEYROP_COLUMNS = [
   'id',
@@ -38,6 +39,8 @@ export async function exportListeFichiersCopiesCleyropExcel(db: Knex, idBatch: s
   const worksheet = workbook.addWorksheet('Cleyrop');
   worksheet.columns = CLEYROP_COLUMNS.map(key => ({ header: key, key }));
   filteredRows.forEach(row => worksheet.addRow(row));
+
+  applyExcelFormatting(worksheet);
 
   const excelFileName = `transfert_RCP_fr_cleyrop_${dateFileStr}.xlsx`;
   const excelFilePath = path.join(repCible, excelFileName);
