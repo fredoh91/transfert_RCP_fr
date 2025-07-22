@@ -33,6 +33,13 @@ async function main() {
     else {
         logger.info('Le transfert SFTP est désactivé.');
     }
+    // Ajout : lecture des variables TRAITEMENT_RCP et TRAITEMENT_NOTICE
+    const traitementRcp = process.env.TRAITEMENT_RCP === 'True';
+    const traitementNotice = process.env.TRAITEMENT_NOTICE === 'True';
+    if (!traitementRcp && !traitementNotice) {
+        logger.warn('Aucun traitement RCP ni Notice n\'est activé. Arrêt du script.');
+        process.exit(0);
+    }
     const poolCodexExtract = await createPoolCodexExtract();
     const repSource = process.env.REP_RCP_SOURCE;
     const baseRepCible = process.env.REP_RCP_CIBLE;
@@ -69,70 +76,80 @@ async function main() {
             idBatchRowId = typeof ids[0] === 'object' ? ids[0].id : ids[0];
         });
         // --- TRAITEMENT RCP ---
-        const listeRcp = await getListeRCP(poolCodexExtract);
-        let iCptRCP = 0;
-        for (const rcp of listeRcp) {
-            iCptRCP++;
-            const { statut, nouveauNom } = await copierFichierRCP(rcp.hname, rcp.code_cis, rcp.dbo_classe_atc_lib_abr, repCibleRCP);
-            const copieOK = await verifierCopieFichier(rcp.hname, rcp.code_cis, rcp.dbo_classe_atc_lib_abr, repCibleRCP);
-            await logCopieFichier({
-                rep_fichier_source: repSource,
-                nom_fichier_source: rcp.hname,
-                rep_fichier_cible: repCibleRCP,
-                nom_fichier_cible: nouveauNom,
-                code_cis: rcp.code_cis,
-                code_atc: rcp.dbo_classe_atc_lib_abr,
-                date_copie_rep_tempo: new Date().toISOString(),
-                resultat_copie_rep_tempo: copieOK,
-                date_copie_sftp: null,
-                resultat_copie_sftp: null,
-                id_batch: idBatch,
-                type_document: 'RCP'
-            });
-            // Transfert SFTP après la copie locale
-            if (typeTransfertSftp) {
-                const localPath = path.join(repCibleRCP, nouveauNom);
-                const remoteSubDir = path.posix.join(path.basename(repCible), 'RCP');
-                await transferFichierSFTP(localPath, remoteSubDir, nouveauNom, idBatch, rcp.code_cis, rcp.dbo_classe_atc_lib_abr, db);
-            }
-            if (iCptRCP >= 10 && process.env.TYPE_EXECUTION === 'Dev') {
-                console.log('Mode debug : arrêt après 10 fichiers RCP');
-                logger.info('Mode debug : arrêt après 10 fichiers RCP');
-                break;
+        if (traitementRcp) {
+            const listeRcp = await getListeRCP(poolCodexExtract);
+            let iCptRCP = 0;
+            for (const rcp of listeRcp) {
+                iCptRCP++;
+                const { statut, nouveauNom } = await copierFichierRCP(rcp.hname, rcp.code_cis, rcp.dbo_classe_atc_lib_abr, repCibleRCP);
+                const copieOK = await verifierCopieFichier(rcp.hname, rcp.code_cis, rcp.dbo_classe_atc_lib_abr, repCibleRCP);
+                await logCopieFichier({
+                    rep_fichier_source: repSource,
+                    nom_fichier_source: rcp.hname,
+                    rep_fichier_cible: repCibleRCP,
+                    nom_fichier_cible: nouveauNom,
+                    code_cis: rcp.code_cis,
+                    code_atc: rcp.dbo_classe_atc_lib_abr,
+                    date_copie_rep_tempo: new Date().toISOString(),
+                    resultat_copie_rep_tempo: copieOK,
+                    date_copie_sftp: null,
+                    resultat_copie_sftp: null,
+                    id_batch: idBatch,
+                    type_document: 'RCP'
+                });
+                // Transfert SFTP après la copie locale
+                if (typeTransfertSftp) {
+                    const localPath = path.join(repCibleRCP, nouveauNom);
+                    const remoteSubDir = path.posix.join(path.basename(repCible), 'RCP');
+                    await transferFichierSFTP(localPath, remoteSubDir, nouveauNom, idBatch, rcp.code_cis, rcp.dbo_classe_atc_lib_abr, db);
+                }
+                if (iCptRCP >= 10 && process.env.TYPE_EXECUTION === 'Dev') {
+                    console.log('Mode debug : arrêt après 10 fichiers RCP');
+                    logger.info('Mode debug : arrêt après 10 fichiers RCP');
+                    break;
+                }
             }
         }
+        else {
+            logger.info('Traitement RCP désactivé par la variable TRAITEMENT_RCP.');
+        }
         // --- TRAITEMENT NOTICES ---
-        const listeNotices = await getListeNotice(poolCodexExtract);
-        let iCptNotice = 0;
-        for (const notice of listeNotices) {
-            iCptNotice++;
-            const { statut, nouveauNom } = await copierFichierRCP(notice.hname, notice.code_cis, notice.dbo_classe_atc_lib_abr, repCibleNotices);
-            const copieOK = await verifierCopieFichier(notice.hname, notice.code_cis, notice.dbo_classe_atc_lib_abr, repCibleNotices);
-            await logCopieFichier({
-                rep_fichier_source: repSource,
-                nom_fichier_source: notice.hname,
-                rep_fichier_cible: repCibleNotices,
-                nom_fichier_cible: nouveauNom,
-                code_cis: notice.code_cis,
-                code_atc: notice.dbo_classe_atc_lib_abr,
-                date_copie_rep_tempo: new Date().toISOString(),
-                resultat_copie_rep_tempo: copieOK,
-                date_copie_sftp: null,
-                resultat_copie_sftp: null,
-                id_batch: idBatch,
-                type_document: 'Notice'
-            });
-            // Transfert SFTP après la copie locale
-            if (typeTransfertSftp) {
-                const localPath = path.join(repCibleNotices, nouveauNom);
-                const remoteSubDir = path.posix.join(path.basename(repCible), 'Notices');
-                await transferFichierSFTP(localPath, remoteSubDir, nouveauNom, idBatch, notice.code_cis, notice.dbo_classe_atc_lib_abr, db);
+        if (traitementNotice) {
+            const listeNotices = await getListeNotice(poolCodexExtract);
+            let iCptNotice = 0;
+            for (const notice of listeNotices) {
+                iCptNotice++;
+                const { statut, nouveauNom } = await copierFichierRCP(notice.hname, notice.code_cis, notice.dbo_classe_atc_lib_abr, repCibleNotices);
+                const copieOK = await verifierCopieFichier(notice.hname, notice.code_cis, notice.dbo_classe_atc_lib_abr, repCibleNotices);
+                await logCopieFichier({
+                    rep_fichier_source: repSource,
+                    nom_fichier_source: notice.hname,
+                    rep_fichier_cible: repCibleNotices,
+                    nom_fichier_cible: nouveauNom,
+                    code_cis: notice.code_cis,
+                    code_atc: notice.dbo_classe_atc_lib_abr,
+                    date_copie_rep_tempo: new Date().toISOString(),
+                    resultat_copie_rep_tempo: copieOK,
+                    date_copie_sftp: null,
+                    resultat_copie_sftp: null,
+                    id_batch: idBatch,
+                    type_document: 'Notice'
+                });
+                // Transfert SFTP après la copie locale
+                if (typeTransfertSftp) {
+                    const localPath = path.join(repCibleNotices, nouveauNom);
+                    const remoteSubDir = path.posix.join(path.basename(repCible), 'Notices');
+                    await transferFichierSFTP(localPath, remoteSubDir, nouveauNom, idBatch, notice.code_cis, notice.dbo_classe_atc_lib_abr, db);
+                }
+                if (iCptNotice >= 10 && process.env.TYPE_EXECUTION === 'Dev') {
+                    console.log('Mode debug : arrêt après 10 fichiers Notices');
+                    logger.info('Mode debug : arrêt après 10 fichiers Notices');
+                    break;
+                }
             }
-            if (iCptNotice >= 10 && process.env.TYPE_EXECUTION === 'Dev') {
-                console.log('Mode debug : arrêt après 10 fichiers Notices');
-                logger.info('Mode debug : arrêt après 10 fichiers Notices');
-                break;
-            }
+        }
+        else {
+            logger.info('Traitement Notices désactivé par la variable TRAITEMENT_NOTICE.');
         }
     }
     catch (error) {
@@ -217,8 +234,9 @@ async function main() {
                 }
             }
             // === Export Europe Cleyrop ===
+            const traitementRcpCentralise = process.env.TRAITEMENT_RCP_CENTRALISE === 'True';
             const repSourceEurope = process.env.REP_RCP_CENTRALISE_SOURCE;
-            if (repSourceEurope) {
+            if (traitementRcpCentralise && repSourceEurope) {
                 let poolEurope = null;
                 try {
                     const { createPoolCodexExtract, closePoolCodexExtract } = await import('./db/codex_extract.js');
@@ -260,6 +278,9 @@ async function main() {
                         await closePoolCodexExtract();
                     }
                 }
+            }
+            else if (!traitementRcpCentralise) {
+                logger.warn('Traitement Europe Cleyrop désactivé par la variable TRAITEMENT_RCP_CENTRALISE.');
             }
             else {
                 logger.warn('Variable REP_RCP_CENTRALISE_SOURCE non définie, export Europe Cleyrop non effectué.');

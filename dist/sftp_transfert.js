@@ -15,7 +15,7 @@ if (!SFTP_HOST || !SFTP_USER || !SFTP_PRIVATE_KEY_PATH || !SFTP_REMOTE_BASE_DIR)
 }
 export async function transferFichierSFTP(localPath, remoteSubDir, // ex: Extract_RCP_20250718
 remoteFileName, idBatch, codeCIS, codeATC, db) {
-    logger.info(`Début transfert SFTP: ${localPath} -> ${remoteSubDir}/${remoteFileName}`);
+    // logger.info(`Début transfert SFTP: ${localPath} -> ${remoteSubDir}/${remoteFileName}`);
     const sftp = new SftpClient();
     const privateKey = fs.readFileSync(SFTP_PRIVATE_KEY_PATH);
     const remoteDir = path.posix.join(SFTP_REMOTE_BASE_DIR, remoteSubDir);
@@ -23,14 +23,14 @@ remoteFileName, idBatch, codeCIS, codeATC, db) {
     let resultat = 'COPIE SFTP KO';
     let dateSftp = new Date().toISOString();
     try {
-        logger.info(`Connexion SFTP à ${SFTP_HOST}:${SFTP_PORT} avec l'utilisateur ${SFTP_USER}`);
+        // logger.info(`Connexion SFTP à ${SFTP_HOST}:${SFTP_PORT} avec l'utilisateur ${SFTP_USER}`);
         await sftp.connect({
             host: SFTP_HOST,
             port: SFTP_PORT,
             username: SFTP_USER,
             privateKey
         });
-        logger.info('Connexion SFTP réussie');
+        // logger.info('Connexion SFTP réussie');
         // Créer le dossier distant si besoin
         try {
             logger.info(`Création du répertoire distant: ${remoteDir}`);
@@ -48,23 +48,23 @@ remoteFileName, idBatch, codeCIS, codeATC, db) {
             throw new Error(`Répertoire distant non créé: ${remoteDir}`);
         }
         // Transférer le fichier
-        logger.info(`Transfert du fichier: ${localPath} -> ${remotePath}`);
+        // logger.info(`Transfert du fichier: ${localPath} -> ${remotePath}`);
         await sftp.fastPut(localPath, remotePath);
-        logger.info('Transfert SFTP terminé');
+        // logger.info('Transfert SFTP terminé');
         // Vérifier la copie en comparant les tailles de fichiers
         try {
             // Récupérer la taille du fichier local
             const localStats = fs.statSync(localPath);
             const localSize = localStats.size;
-            logger.info(`Taille fichier local: ${localSize} octets`);
+            // logger.info(`Taille fichier local: ${localSize} octets`);
             // Récupérer la taille du fichier distant
             const remoteStats = await sftp.stat(remotePath);
             const remoteSize = remoteStats.size;
-            logger.info(`Taille fichier distant: ${remoteSize} octets`);
+            // logger.info(`Taille fichier distant: ${remoteSize} octets`);
             // Comparer les tailles
             if (localSize === remoteSize) {
                 resultat = 'COPIE SFTP OK';
-                logger.info('✅ Tailles identiques - copie SFTP réussie');
+                // logger.info('✅ Tailles identiques - copie SFTP réussie');
             }
             else {
                 resultat = 'COPIE SFTP KO';
