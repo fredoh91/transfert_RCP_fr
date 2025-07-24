@@ -8,6 +8,6 @@
     "skipLibCheck": true,
     "outDir": "./dist"
   },
-  "include": ["src/**/*.ts", "types/**/*.ts"],
+  "include": ["src/**/*.ts", "types/**/*.ts", "src/db/migrations/20250723124940_add_columns_to_liste_fichiers_copies.cjs"],
   "exclude": ["node_modules"]
 }

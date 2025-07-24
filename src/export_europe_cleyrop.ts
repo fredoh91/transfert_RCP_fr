@@ -43,6 +43,36 @@ async function getCodeAtcForCis(pool: mysql.Pool, code_cis: string): Promise<str
     if (connection) connection.release();
   }
 }
+// Récupère le code ATC pour un code_cis donné
+async function getAtcSpecialiteForCis(pool: mysql.Pool, code_cis: string): Promise<{code_atc: string, lib_atc: string, nom_specialite: string}> {
+  let connection: mysql.PoolConnection | null = null;
+  try {
+    connection = await pool.getConnection();
+    const [rows] = await connection.execute(
+      `select vu.code_cis as CodeCIS, 
+              vu.dbo_classe_atc_lib_abr as CodeATC_5,
+              vu.dbo_classe_atc_lib_court as LibATC,
+              vu.nom_vu as NomSpecialite 
+              from vuutil vu 
+              where vu.code_cis = ? 
+              order by vu.dbo_classe_atc_lib_abr`,
+      [code_cis]
+    );
+    if (Array.isArray(rows) && rows.length > 0) {
+      // On prend la première valeur trouvée
+      const code_atc = (rows[0] as any).CodeATC_5 || '';
+      const lib_atc = (rows[0] as any).LibATC || '';
+      const nom_specialite = (rows[0] as any).NomSpecialite || '';
+      return { code_atc, lib_atc, nom_specialite };
+    }
+    return { code_atc: 'N/A', lib_atc: 'N/A', nom_specialite: 'N/A' };
+  } catch (err) {
+    logger.error({ err }, `Erreur lors de la récupération du code ATC pour code_cis=${code_cis}`);
+    return { code_atc: 'N/A', lib_atc: 'N/A', nom_specialite: 'N/A' };
+  } finally {
+    if (connection) connection.release();
+  }
+}
 
 // Fonction principale d'export
 export async function exportEuropeCleyropExcel({
@@ -82,10 +112,13 @@ export async function exportEuropeCleyropExcel({
   const dataWithAtc: any[] = [];
   for (const row of rows) {
     const code_cis = row['SpecId'] || '';
-    const code_atc = code_cis ? await getCodeAtcForCis(poolCodexExtract, code_cis) : '';
+    // const code_atc = code_cis ? await getCodeAtcForCis(poolCodexExtract, code_cis) : '';
+    const { code_atc, lib_atc, nom_specialite } = await getAtcSpecialiteForCis(poolCodexExtract, code_cis)
     const excelRow = {
       code_cis,
       code_atc,
+      lib_atc,
+      nom_specialite,
       Product_Number: row['Product_Number'] || '',
       UrlEpar: row['UrlEpar'] || ''
     };
@@ -98,6 +131,8 @@ export async function exportEuropeCleyropExcel({
   worksheet.columns = [
     { header: 'code_cis', key: 'code_cis' },
     { header: 'code_atc', key: 'code_atc' },
+    { header: 'lib_atc', key: 'lib_atc' },
+    { header: 'nom_specialite', key: 'nom_specialite' },
     { header: 'Product_Number', key: 'Product_Number' },
     { header: 'UrlEpar', key: 'UrlEpar' }
   ];

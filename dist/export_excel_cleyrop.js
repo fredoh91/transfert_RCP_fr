@@ -6,6 +6,8 @@ const CLEYROP_COLUMNS = [
     'nom_fichier_cible',
     'code_cis',
     'code_atc',
+    'lib_atc',
+    'nom_specialite',
     'date_copie_sftp',
     'resultat_copie_sftp',
     'id_batch',

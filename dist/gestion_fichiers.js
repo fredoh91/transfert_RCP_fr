@@ -31,6 +31,15 @@ export async function copierFichierRCP(nomFichier, codeCIS, codeATC, repCible) {
     catch (err) {
         // Si erreur, le fichier n'existe pas, on continue
     }
+    // Vérifier si le fichier source existe avant de tenter la copie
+    try {
+        await fs.access(cheminSource);
+    }
+    catch (err) {
+        // Le fichier source n'existe pas
+        logger.warn(`⚠️ Fichier source introuvable : ${cheminSource}`);
+        return { statut: "FICHIER_SOURCE_INTROUVABLE", nouveauNom };
+    }
     await fs.copyFile(cheminSource, cheminCible);
     compteurCopies++;
     if (compteurCopies % 100 === 0) {

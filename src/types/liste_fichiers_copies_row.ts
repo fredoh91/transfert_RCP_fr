@@ -12,4 +12,6 @@ export type ListeFichiersCopiesRow = {
   resultat_copie_sftp?: string | null;
   id_batch?: string;
   type_document?: string | null;
+  lib_atc?: string | null;
+  nom_specialite?: string | null;
 }; 
