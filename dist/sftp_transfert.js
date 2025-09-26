@@ -2,26 +2,25 @@
 import SftpClient from 'ssh2-sftp-client';
 import fs from 'fs';
 import path from 'path';
-import dotenv from 'dotenv';
 import { logger } from './logs_config.js';
-dotenv.config({ debug: false });
-const SFTP_HOST = process.env.SFTP_HOST;
-const SFTP_PORT = process.env.SFTP_PORT ? parseInt(process.env.SFTP_PORT) : 22;
-const SFTP_USER = process.env.SFTP_USER;
-const SFTP_PRIVATE_KEY_PATH = process.env.SFTP_PRIVATE_KEY_PATH;
-const SFTP_REMOTE_BASE_DIR = process.env.SFTP_REMOTE_BASE_DIR;
-if (!SFTP_HOST || !SFTP_USER || !SFTP_PRIVATE_KEY_PATH || !SFTP_REMOTE_BASE_DIR) {
-    throw new Error('Paramètres SFTP manquants dans le .env');
-}
 export async function transferFichierSFTP(localPath, remoteSubDir, // ex: Extract_RCP_20250718
 remoteFileName, idBatch, codeCIS, codeATC, db) {
     // logger.info(`Début transfert SFTP: ${localPath} -> ${remoteSubDir}/${remoteFileName}`);
+    const SFTP_HOST = process.env.SFTP_HOST;
+    const SFTP_PORT = process.env.SFTP_PORT ? parseInt(process.env.SFTP_PORT) : 22;
+    const SFTP_USER = process.env.SFTP_USER;
+    const SFTP_PRIVATE_KEY_PATH = process.env.SFTP_PRIVATE_KEY_PATH;
+    const SFTP_REMOTE_BASE_DIR = process.env.SFTP_REMOTE_BASE_DIR;
+    if (!SFTP_HOST || !SFTP_USER || !SFTP_PRIVATE_KEY_PATH || !SFTP_REMOTE_BASE_DIR) {
+        logger.error('Paramètres SFTP manquants dans le .env. Transfert annulé.');
+        throw new Error('Paramètres SFTP manquants dans le .env');
+    }
     const sftp = new SftpClient();
     const privateKey = fs.readFileSync(SFTP_PRIVATE_KEY_PATH);
     const remoteDir = path.posix.join(SFTP_REMOTE_BASE_DIR, remoteSubDir);
     const remotePath = path.posix.join(remoteDir, remoteFileName);
     let resultat = 'COPIE SFTP KO';
-    let dateSftp = new Date().toISOString();
+    const dateSftp = new Date().toISOString();
     try {
         // logger.info(`Connexion SFTP à ${SFTP_HOST}:${SFTP_PORT} avec l'utilisateur ${SFTP_USER}`);
         await sftp.connect({
@@ -52,8 +51,7 @@ remoteFileName, idBatch, codeCIS, codeATC, db) {
         await sftp.fastPut(localPath, remotePath);
         // logger.info('Transfert SFTP terminé');
         // Vérifier la copie en comparant les tailles de fichiers
-        try {
-            // Récupérer la taille du fichier local
+        try { // Récupérer la taille du fichier local
             const localStats = fs.statSync(localPath);
             const localSize = localStats.size;
             // logger.info(`Taille fichier local: ${localSize} octets`);
@@ -83,12 +81,14 @@ remoteFileName, idBatch, codeCIS, codeATC, db) {
     finally {
         await sftp.end();
         logger.info(`Fin transfert SFTP: ${resultat}`);
-        // Mettre à jour la table SQLite
-        await db('liste_fichiers_copies')
-            .where({ id_batch: idBatch, code_cis: codeCIS, code_atc: codeATC })
-            .update({
-            date_copie_sftp: dateSftp,
-            resultat_copie_sftp: resultat
-        });
+        // Mettre à jour la table SQLite, uniquement si ce n'est pas un fichier Excel
+        if (codeCIS) {
+            await db('liste_fichiers_copies')
+                .where({ id_batch: idBatch, code_cis: codeCIS, code_atc: codeATC })
+                .update({
+                date_copie_sftp: dateSftp,
+                resultat_copie_sftp: resultat
+            });
+        }
     }
 }

@@ -4,6 +4,7 @@
 
 1. [Générer une clé SSH pour le SFTP](#générer-une-clé-ssh-pour-le-sftp)
 2. [Initialiser la base SQLite (migrations)](#initialiser-la-base-sqlite-migrations)
+3. [Lancement des scripts et configuration](#lancement-des-scripts-et-configuration)
 
 ---
 
@@ -94,3 +95,55 @@ npx knex --knexfile knexfile.cjs migrate:latest
 ```
 
 Cela supprime toutes les tables puis les recrée. 
+
+# 3. Lancement des scripts et configuration
+
+## 3.1 Script principal
+
+**Commande :**
+
+```sh
+npm run start
+```
+
+**Description :** Lance le traitement principal qui gère :
+
+- La copie des documents décentralisés (RCP/Notices FR).
+- Le traitement des documents centralisés (Europe), incluant la génération d'un fichier Excel et le téléchargement des PDF associés.
+- Le transfert SFTP des fichiers générés.
+
+**Variables d'environnement principales :**
+
+| Variable | Description | Exemple |
+|---|---|---|
+| `TRAITEMENT_RCP_DECENTRALISE` | (True/False) **Interrupteur principal** pour le traitement décentralisé (FR). | `True` |
+| `TRAITEMENT_RCP_CENTRALISE` | (True/False) **Interrupteur principal** pour le traitement centralisé (EU). | `True` |
+| `TYPE_TRANSFERT_SFTP` | (True/False) Active ou désactive tous les transferts SFTP. | `True` |
+| `REP_RCP_SOURCE` | Chemin source pour les fichiers RCP/Notices FR. | `\\par-lx-1143\DATA_MOCATOR\iMocaJouve\Mocahtml\` |
+| `REP_RCP_CIBLE` | Répertoire de base où les exports seront créés. | `E:\RCP\` |
+| `REP_RCP_CENTRALISE_SOURCE` | Chemin source pour le fichier CSV des RCP centralisés (EU). | `G:\DM-SURVEIL\MEDICAMENTS\BASES\BASES_DIVERSES\HCG\Echanges_DSI\` |
+| `SFTP_HOST` | Adresse du serveur SFTP. | `sftp.ansm-secnum.cleyrop.net` |
+| `SFTP_PORT` | Port du serveur SFTP. | `2222` |
+| `SFTP_USER` | Nom d'utilisateur pour la connexion SFTP. | `transfert_rcp_fr` |
+| `SFTP_PRIVATE_KEY_PATH` | Chemin absolu vers la clé SSH privée. | `D:\Users\Frannou\.ssh\id_rsa_transfert_rcp_fr` |
+| `SFTP_REMOTE_BASE_DIR` | Répertoire de base sur le serveur SFTP. | `/transfert_rcp_fr` |
+| `DL_EMA_RETRY_COUNT` | Nombre de tentatives de téléchargement pour un PDF européen en cas d'échec. | `3` |
+| `SFTP_RETRY_COUNT` | Nombre de tentatives pour les transferts SFTP en échec (concerne les fichiers FR). | `3` |
+| `MAX_FILES_TO_PROCESS` | (Optionnel) Limite le nombre de fichiers traités par catégorie pour les tests. | `5` |
+
+## 3.2 Script de rattrapage (Europe)
+**Commande :**
+```sh
+npm run rattrapage_rcp_eu
+```
+
+**Description :** Script dédié à la récupération des fichiers PDF européens qui ont échoué lors du dernier lancement du script principal. Il se base sur les logs de la base de données SQLite pour identifier les fichiers à traiter.
+
+**Variables d'environnement principales :**
+
+| Variable | Description | Exemple |
+|---|---|---|
+| `RELANCE_RATTRPAGE_EU` | (True/False) Si `True`, le script se relancera en boucle tant qu'il restera des fichiers en échec. | `True` |
+| `TEMPO_AVANT_RELANCE_RATTRPAGE_EU` | Temps d'attente en secondes entre deux cycles de relance automatique. | `30` |
+| `DL_EMA_RETRY_COUNT` | Nombre de tentatives pour chaque fichier lors d'un cycle de rattrapage. | `3` |
+

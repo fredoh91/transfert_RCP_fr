@@ -4,18 +4,20 @@ import ExcelJS from 'exceljs';
 import { Knex } from 'knex';
 import mysql from 'mysql2/promise';
 import { logger } from './logs_config.js';
+import { telechargerEtRenommerPdf } from './gestion_pdf_centralise.js'; // Nouvelle importation
 import { applyExcelFormatting } from './excel_formatter.js';
 
 // Utilitaire pour parser un CSV simple (séparateur ;)
 async function parseCsvFile(filePath: string): Promise<any[]> {
   const content = await fs.readFile(filePath, 'utf-8');
   const lines = content.split(/\r?\n/).filter(Boolean);
-  const headers = lines[0].split(';');
-  return lines.slice(1).map(line => {
+  if (lines.length < 2) return []; // Si pas de données ou que l'en-tête, retourner un tableau vide
+  const headers = lines[0].split(';').map(h => h.trim());
+  return lines.slice(1).map(line => { // .slice(1) pour ignorer la ligne d'en-tête
     const values = line.split(';');
     const obj: Record<string, string> = {};
     headers.forEach((h, i) => {
-      obj[h] = values[i] || '';
+      obj[h] = (values[i] || '').trim();
     });
     return obj;
   });
@@ -79,12 +81,20 @@ export async function exportEuropeCleyropExcel({
   poolCodexExtract,
   repSource,
   repCible,
-  dateFileStr
+  dateFileStr,
+  maxFilesToProcess,
+  repCibleEURCPNotices,
+  db,
+  idBatch
 }: {
   poolCodexExtract: mysql.Pool,
   repSource: string,
   repCible: string,
-  dateFileStr: string
+  dateFileStr: string,
+  maxFilesToProcess?: number,
+  repCibleEURCPNotices: string,
+  db: Knex,
+  idBatch: string
 }): Promise<string | null> {
   // Trouver le fichier CSV du mois courant uniquement
   const now = new Date();
@@ -110,7 +120,9 @@ export async function exportEuropeCleyropExcel({
   // Préparation des données pour Excel
   // Renommer SpecId en code_cis, ajouter code_atc en 2e position
   const dataWithAtc: any[] = [];
+  let iCpt = 0;
   for (const row of rows) {
+    iCpt++;
     const code_cis = row['SpecId'] || '';
     // const code_atc = code_cis ? await getCodeAtcForCis(poolCodexExtract, code_cis) : '';
     const { code_atc, lib_atc, nom_specialite } = await getAtcSpecialiteForCis(poolCodexExtract, code_cis)
@@ -122,7 +134,26 @@ export async function exportEuropeCleyropExcel({
       Product_Number: row['Product_Number'] || '',
       UrlEpar: row['UrlEpar'] || ''
     };
+
+    // Télécharger et renommer le PDF si une URL est présente
+    if (excelRow.UrlEpar) {
+      await telechargerEtRenommerPdf({
+        url: excelRow.UrlEpar,
+        codeCIS: excelRow.code_cis,
+        codeATC: excelRow.code_atc,
+        lib_atc: excelRow.lib_atc,
+        nom_specialite: excelRow.nom_specialite,
+        repCible: repCibleEURCPNotices,
+        db,
+        idBatch
+      });
+    }
+
     dataWithAtc.push(excelRow);
+    if (maxFilesToProcess && iCpt >= maxFilesToProcess) {
+      logger.info(`Limite de test atteinte (${maxFilesToProcess}) : arrêt du traitement du fichier CSV Europe.`);
+      break;
+    }
   }
 
   // Création du fichier Excel
