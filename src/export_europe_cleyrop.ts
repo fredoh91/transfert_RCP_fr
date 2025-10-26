@@ -7,6 +7,11 @@ import { logger } from './logs_config.js';
 import { telechargerEtRenommerPdf } from './gestion_pdf_centralise.js'; // Nouvelle importation
 import { applyExcelFormatting } from './excel_formatter.js';
 
+// Ajout de la fonction sleep pour le délai de courtoisie
+async function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 // Utilitaire pour parser un CSV simple (séparateur ;)
 async function parseCsvFile(filePath: string): Promise<any[]> {
   const content = await fs.readFile(filePath, 'utf-8');
@@ -46,7 +51,7 @@ async function getCodeAtcForCis(pool: mysql.Pool, code_cis: string): Promise<str
   }
 }
 // Récupère le code ATC pour un code_cis donné
-async function getAtcSpecialiteForCis(pool: mysql.Pool, code_cis: string): Promise<{code_atc: string, lib_atc: string, nom_specialite: string}> {
+async function getAtcSpecialiteForCis(pool: mysql.Pool, code_cis: string): Promise<{code_atc: string, lib_atc: string, nom_specialite: string, code_vuprinceps: string | null}> {
   let connection: mysql.PoolConnection | null = null;
   try {
     connection = await pool.getConnection();
@@ -54,7 +59,8 @@ async function getAtcSpecialiteForCis(pool: mysql.Pool, code_cis: string): Promi
       `select vu.code_cis as CodeCIS, 
               vu.dbo_classe_atc_lib_abr as CodeATC_5,
               vu.dbo_classe_atc_lib_court as LibATC,
-              vu.nom_vu as NomSpecialite 
+              vu.nom_vu as NomSpecialite,
+              vu.code_vuprinceps
               from vuutil vu 
               where vu.code_cis = ? 
               order by vu.dbo_classe_atc_lib_abr`,
@@ -65,12 +71,13 @@ async function getAtcSpecialiteForCis(pool: mysql.Pool, code_cis: string): Promi
       const code_atc = (rows[0] as any).CodeATC_5 || '';
       const lib_atc = (rows[0] as any).LibATC || '';
       const nom_specialite = (rows[0] as any).NomSpecialite || '';
-      return { code_atc, lib_atc, nom_specialite };
+      const code_vuprinceps = (rows[0] as any).code_vuprinceps || null;
+      return { code_atc, lib_atc, nom_specialite, code_vuprinceps };
     }
-    return { code_atc: 'N/A', lib_atc: 'N/A', nom_specialite: 'N/A' };
+    return { code_atc: 'N/A', lib_atc: 'N/A', nom_specialite: 'N/A', code_vuprinceps: null };
   } catch (err) {
     logger.error({ err }, `Erreur lors de la récupération du code ATC pour code_cis=${code_cis}`);
-    return { code_atc: 'N/A', lib_atc: 'N/A', nom_specialite: 'N/A' };
+    return { code_atc: 'N/A', lib_atc: 'N/A', nom_specialite: 'N/A', code_vuprinceps: null };
   } finally {
     if (connection) connection.release();
   }
@@ -124,13 +131,14 @@ export async function exportEuropeCleyropExcel({
   for (const row of rows) {
     iCpt++;
     const code_cis = row['SpecId'] || '';
-    // const code_atc = code_cis ? await getCodeAtcForCis(poolCodexExtract, code_cis) : '';
-    const { code_atc, lib_atc, nom_specialite } = await getAtcSpecialiteForCis(poolCodexExtract, code_cis)
+    const { code_atc, lib_atc, nom_specialite, code_vuprinceps } = await getAtcSpecialiteForCis(poolCodexExtract, code_cis)
+    const princepsGeneriqueValue = code_vuprinceps === null ? 'princeps' : code_vuprinceps;
     const excelRow = {
       code_cis,
       code_atc,
       lib_atc,
       nom_specialite,
+      princeps_generique: princepsGeneriqueValue,
       Product_Number: row['Product_Number'] || '',
       UrlEpar: row['UrlEpar'] || ''
     };
@@ -147,6 +155,9 @@ export async function exportEuropeCleyropExcel({
         db,
         idBatch
       });
+
+      // Ajout d'un délai de courtoisie pour ne pas surcharger le serveur
+      await sleep(2500); // 2500ms de pause
     }
 
     dataWithAtc.push(excelRow);
@@ -164,6 +175,7 @@ export async function exportEuropeCleyropExcel({
     { header: 'code_atc', key: 'code_atc' },
     { header: 'lib_atc', key: 'lib_atc' },
     { header: 'nom_specialite', key: 'nom_specialite' },
+    { header: 'princeps_generique', key: 'princeps_generique' },
     { header: 'Product_Number', key: 'Product_Number' },
     { header: 'UrlEpar', key: 'UrlEpar' }
   ];

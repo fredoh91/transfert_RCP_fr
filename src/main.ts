@@ -40,13 +40,52 @@ async function processerDocumentsDecentralises(params: {
   idBatch: string,
   db: knex.Knex,
   dateFileStr: string,
-  typeTransfertSftp: boolean,
+  traitementRcpDecentralise: boolean,
+  transfertSftp: boolean,
   maxFilesToProcess?: number
 }) {
-  const { poolCodexExtract, repCible, repCibleFR, repCibleRCP, repCibleNotices, repSource, idBatch, db, dateFileStr, typeTransfertSftp } = params;
+  const { poolCodexExtract, repCible, repCibleFR, repCibleRCP, repCibleNotices, repSource, idBatch, db, dateFileStr, traitementRcpDecentralise, transfertSftp, maxFilesToProcess } = params;
 
-  const traitementRcp = process.env.TRAITEMENT_RCP === 'True';
-  const traitementNotice = process.env.TRAITEMENT_NOTICE === 'True';
+  const traitementRcp = traitementRcpDecentralise && process.env.TRAITEMENT_RCP === 'True';
+  const traitementNotice = traitementRcpDecentralise && process.env.TRAITEMENT_NOTICE === 'True';
+
+  if (!traitementRcp && !traitementNotice && transfertSftp) {
+    // Rattrapage SFTP pour les documents décentralisés
+
+    const dernierBatch = await db('liste_id_batch').orderBy('debut_batch', 'desc').first();
+    if (!dernierBatch) {
+      logger.warn('Aucun batch précédent trouvé. Impossible de lancer le transfert SFTP seul.');
+      return;
+    }
+    const idBatchPrecedent = dernierBatch.id_batch;
+    logger.info(`Utilisation du dernier batch trouvé : ${idBatchPrecedent}`);
+
+    const fichiersATransferer = await db('liste_fichiers_copies')
+      .where({ id_batch: idBatchPrecedent })
+      .where(function() {
+        this.where('resultat_copie_sftp', '!=', 'COPIE OK').orWhereNull('resultat_copie_sftp');
+      })
+      .andWhere(function() {
+        this.where('type_document', 'RCP').orWhere('type_document', 'Notice');
+      });
+
+    logger.info(`Nombre de fichiers à transférer : ${fichiersATransferer.length}`);
+
+    for (const fichier of fichiersATransferer) {
+      const subDir = fichier.type_document === 'RCP' ? 'RCP' : 'Notices';
+      const localPath = path.join(repCibleFR!, subDir, fichier.nom_fichier_cible);
+      
+      if (!fsSync.existsSync(localPath)) {
+        logger.warn(`Le fichier local ${localPath} n'existe pas. Mise à jour du statut en "FICHIER LOCAL INEXISTANT".`);
+        await db('liste_fichiers_copies').where({ id: fichier.id }).update({ resultat_copie_sftp: 'FICHIER LOCAL INEXISTANT' });
+        continue;
+      }
+
+      const remoteSubDir = path.posix.join('FR', subDir);
+      await transferFichierSFTP(localPath, remoteSubDir, fichier.nom_fichier_cible, idBatch, fichier.code_cis, fichier.code_atc, db);
+    }
+    return;
+  }
 
   // --- TRAITEMENT RCP ---
   if (traitementRcp) {
@@ -66,6 +105,7 @@ async function processerDocumentsDecentralises(params: {
         // Vérifier si le fichier existe déjà
         if (fsSync.existsSync(cheminCible)) {
           logger.info(`Fichier RCP déjà présent: ${cheminCible}`);
+          const princepsGeneriqueValue = rcp.code_vuprinceps === null ? 'princeps' : rcp.code_vuprinceps;
           await logCopieFichier({
             rep_fichier_source: repSource!, 
             nom_fichier_source: rcp.hname, 
@@ -80,7 +120,8 @@ async function processerDocumentsDecentralises(params: {
             id_batch: idBatch,
             type_document: 'RCP',
             lib_atc: rcp.dbo_classe_atc_lib_court,
-            nom_specialite: rcp.nom_vu, 
+            nom_specialite: rcp.nom_vu,
+            princeps_generique: princepsGeneriqueValue,
           });
           continue; // Passer au fichier suivant
         }
@@ -94,13 +135,13 @@ async function processerDocumentsDecentralises(params: {
         } else {
           copieOK = await verifierCopieFichier(rcp.hname, rcp.code_cis, rcp.dbo_classe_atc_lib_abr, repCibleRCP!);
           
-          if (typeTransfertSftp && copieOK === 'COPIE OK') {
+          if (transfertSftp && copieOK === 'COPIE OK') {
             const localPath = path.join(repCibleRCP!, nouveauNom);
             const remoteSubDir = path.posix.join(path.basename(path.dirname(repCibleRCP!)), 'RCP');
             await transferFichierSFTP(localPath, remoteSubDir, nouveauNom, idBatch, rcp.code_cis, rcp.dbo_classe_atc_lib_abr, db);
           }
         }
-        
+        const princepsGeneriqueValue = rcp.code_vuprinceps === null ? 'princeps' : rcp.code_vuprinceps;
         await logCopieFichier({
           rep_fichier_source: repSource!, 
           nom_fichier_source: rcp.hname, 
@@ -110,12 +151,13 @@ async function processerDocumentsDecentralises(params: {
           code_atc: rcp.dbo_classe_atc_lib_abr,
           date_copie_rep_tempo: new Date().toISOString(),
           resultat_copie_rep_tempo: copieOK,
-          date_copie_sftp: typeTransfertSftp && copieOK === 'COPIE OK' ? new Date().toISOString() : null,
-          resultat_copie_sftp: typeTransfertSftp && copieOK === 'COPIE OK' ? 'COPIE OK' : null,
+          date_copie_sftp: transfertSftp && copieOK === 'COPIE OK' ? new Date().toISOString() : null,
+          resultat_copie_sftp: transfertSftp && copieOK === 'COPIE OK' ? 'COPIE OK' : null,
           id_batch: idBatch,
           type_document: 'RCP',
           lib_atc: rcp.dbo_classe_atc_lib_court,
-          nom_specialite: rcp.nom_vu, 
+          nom_specialite: rcp.nom_vu,
+          princeps_generique: princepsGeneriqueValue,
         });
       } catch (error) {
         logger.error(`Erreur lors du traitement du RCP ${rcp.hname}:`, error);
@@ -148,6 +190,7 @@ async function processerDocumentsDecentralises(params: {
         // Vérifier si le fichier existe déjà
         if (fsSync.existsSync(cheminCible)) {
           logger.info(`Fichier Notice déjà présent: ${cheminCible}`);
+          const princepsGeneriqueValue = notice.code_vuprinceps === null ? 'princeps' : notice.code_vuprinceps;
           await logCopieFichier({
             rep_fichier_source: repSource!, 
             nom_fichier_source: notice.hname, 
@@ -163,6 +206,7 @@ async function processerDocumentsDecentralises(params: {
             type_document: 'Notice',
             lib_atc: notice.dbo_classe_atc_lib_court,
             nom_specialite: notice.nom_vu,
+            princeps_generique: princepsGeneriqueValue,
           });
           continue; // Passer au fichier suivant
         }
@@ -177,12 +221,12 @@ async function processerDocumentsDecentralises(params: {
           copieOK = await verifierCopieFichier(notice.hname, notice.code_cis, notice.dbo_classe_atc_lib_abr, repCibleNotices!);
         }
         
-        if (typeTransfertSftp && copieOK === 'COPIE OK') {
+        if (transfertSftp && copieOK === 'COPIE OK') {
           const localPath = path.join(repCibleNotices!, nouveauNom);
           const remoteSubDir = path.posix.join(path.basename(path.dirname(repCibleNotices!)), 'Notices');
           await transferFichierSFTP(localPath, remoteSubDir, nouveauNom, idBatch, notice.code_cis, notice.dbo_classe_atc_lib_abr, db);
         }
-        
+        const princepsGeneriqueValue = notice.code_vuprinceps === null ? 'princeps' : notice.code_vuprinceps;
         await logCopieFichier({
           rep_fichier_source: repSource!, 
           nom_fichier_source: notice.hname, 
@@ -192,12 +236,13 @@ async function processerDocumentsDecentralises(params: {
           code_atc: notice.dbo_classe_atc_lib_abr,
           date_copie_rep_tempo: new Date().toISOString(),
           resultat_copie_rep_tempo: copieOK,
-          date_copie_sftp: typeTransfertSftp && copieOK === 'COPIE OK' ? new Date().toISOString() : null,
-          resultat_copie_sftp: typeTransfertSftp && copieOK === 'COPIE OK' ? 'COPIE OK' : null,
+          date_copie_sftp: transfertSftp && copieOK === 'COPIE OK' ? new Date().toISOString() : null,
+          resultat_copie_sftp: transfertSftp && copieOK === 'COPIE OK' ? 'COPIE OK' : null,
           id_batch: idBatch,
           type_document: 'Notice',
           lib_atc: notice.dbo_classe_atc_lib_court,
           nom_specialite: notice.nom_vu,
+          princeps_generique: princepsGeneriqueValue,
         });
       } catch (error) {
         logger.error(`Erreur lors du traitement de la notice ${notice.hname}:`, error);
@@ -225,10 +270,9 @@ async function processerDocumentsDecentralises(params: {
     }
 
     // Export Excel cleyrop (colonnes réduites dans le dossier FR)
-    const cleyropExcelFilePath = await exportListeFichiersCopiesCleyropExcel(db, idBatch, repCibleFR!, dateFileStr);
-
-    if (typeTransfertSftp) {
-      // Boucle de retry SFTP sur les KO des fichiers FR
+          const cleyropExcelFilePath = await exportListeFichiersCopiesCleyropExcel(db, idBatch, repCibleFR!, dateFileStr);
+    
+          if (transfertSftp) {      // Boucle de retry SFTP sur les KO des fichiers FR
       const retryCount = parseInt(process.env.SFTP_RETRY_COUNT || '3', 10);
       for (let i = 0; i < retryCount; i++) {
         const lignesKO = await db('liste_fichiers_copies')
@@ -281,19 +325,56 @@ async function processerDocumentsDecentralises(params: {
 async function processerDocumentsCentralises(params: {
   repCible?: string,
   dateFileStr: string,
-  typeTransfertSftp: boolean,
+  traitementRcpCentralise: boolean,
+  transfertSftp: boolean,
   idBatch: string,
   db: knex.Knex, 
   repCibleEURCPNotices?: string, // Nouveau paramètre
   maxFilesToProcess?: number
 }) { 
-  const { repCible, dateFileStr, typeTransfertSftp, idBatch, db, repCibleEURCPNotices, maxFilesToProcess } = params;
+  const { repCible, dateFileStr, traitementRcpCentralise, transfertSftp, idBatch, db, repCibleEURCPNotices, maxFilesToProcess } = params;
 
-  const traitementRcpCentralise = process.env.TRAITEMENT_RCP_CENTRALISE === 'True';
   const repSourceEurope = process.env.REP_RCP_CENTRALISE_SOURCE;
 
+  if (!traitementRcpCentralise && transfertSftp) {
+    // Rattrapage SFTP pour les documents centralisés
+    const dernierBatch = await db('liste_id_batch').orderBy('debut_batch', 'desc').first();
+    if (!dernierBatch) {
+      logger.warn('Aucun batch précédent trouvé. Impossible de lancer le transfert SFTP seul.');
+      return;
+    }
+    const idBatchPrecedent = dernierBatch.id_batch;
+    logger.info(`Utilisation du dernier batch trouvé : ${idBatchPrecedent}`);
+
+    const fichiersATransferer = await db('liste_fichiers_copies')
+      .where({ id_batch: idBatchPrecedent })
+      .where(function() {
+        this.where('resultat_copie_sftp', '!=', 'COPIE OK').orWhereNull('resultat_copie_sftp');
+      })
+      .andWhere(function() {
+        this.where('type_document', 'RCP_CENTRALISE').orWhere('type_document', 'EXCEL_CENTRALISE');
+      });
+
+    logger.info(`Nombre de fichiers à transférer : ${fichiersATransferer.length}`);
+
+    for (const fichier of fichiersATransferer) {
+      const subDir = fichier.type_document === 'RCP_CENTRALISE' ? 'RCP_Notices' : '';
+      const localPath = path.join(repCible!, subDir, fichier.nom_fichier_cible);
+
+      if (!fsSync.existsSync(localPath)) {
+        logger.warn(`Le fichier local ${localPath} n'existe pas. Mise à jour du statut en "FICHIER LOCAL INEXISTANT".`);
+        await db('liste_fichiers_copies').where({ id: fichier.id }).update({ resultat_copie_sftp: 'FICHIER LOCAL INEXISTANT' });
+        continue;
+      }
+
+      const remoteSubDir = path.posix.join('EU', subDir);
+      await transferFichierSFTP(localPath, remoteSubDir, fichier.nom_fichier_cible, idBatch, fichier.code_cis, fichier.code_atc, db);
+    }
+    return;
+  }
+
   if (!traitementRcpCentralise) {
-    logger.info('Traitement des documents centralisés (Europe) désactivé par la variable TRAITEMENT_RCP_CENTRALISE.');
+    logger.info('Traitement des documents centralisés (Europe) désactivé.');
     return;
   }
   if (!repSourceEurope) {
@@ -328,7 +409,7 @@ async function processerDocumentsCentralises(params: {
 
     if (europeExcelFilePath) {
       logger.info(`Export Europe Cleyrop généré : ${europeExcelFilePath}`);
-      if (typeTransfertSftp) {
+      if (transfertSftp) {
         const remoteSubDir = path.basename(path.dirname(europeExcelFilePath));
         const europeExcelFileName = path.basename(europeExcelFilePath);
         try {
@@ -363,11 +444,19 @@ async function main() {
   
   logger.info('Debut traitement');
 
-  const typeTransfertSftp = process.env.TYPE_TRANSFERT_SFTP === 'True';
-  if (typeTransfertSftp) {
-    logger.info('Le transfert SFTP est activé.');
+  const transfertSftpDecentralise = process.env.TRANSFERT_SFTP_DECENTRALISE === 'True';
+  const transfertSftpCentralise = process.env.TRANSFERT_SFTP_CENTRALISE === 'True';
+
+  if (transfertSftpDecentralise) {
+    logger.info('Le transfert SFTP décentralisé est activé.');
   } else {
-    logger.info('Le transfert SFTP est désactivé.');
+    logger.info('Le transfert SFTP décentralisé est désactivé.');
+  }
+
+  if (transfertSftpCentralise) {
+    logger.info('Le transfert SFTP centralisé est activé.');
+  } else {
+    logger.info('Le transfert SFTP centralisé est désactivé.');
   }
 
   const maxFilesToProcess = process.env.MAX_FILES_TO_PROCESS ? parseInt(process.env.MAX_FILES_TO_PROCESS, 10) : undefined;
@@ -378,8 +467,8 @@ async function main() {
   const traitementRcpCentralise = process.env.TRAITEMENT_RCP_CENTRALISE === 'True';
   const traitementRcpDecentralise = process.env.TRAITEMENT_RCP_DECENTRALISE === 'True';
 
-  if (!traitementRcpCentralise && !traitementRcpDecentralise) {
-    logger.warn('Aucun traitement RCP ni Notice ni RCP Centralisé ni RCP Décentralisé n\'est activé. Arrêt du script.');
+  if (!traitementRcpCentralise && !traitementRcpDecentralise && !transfertSftpCentralise && !transfertSftpDecentralise) {
+    logger.warn('Aucun traitement ni transfert n\'est activé. Arrêt du script.');
     process.exit(0);
   }
 
@@ -432,7 +521,7 @@ async function main() {
       });
 
     // --- TRAITEMENT DES DOCUMENTS DÉCENTRALISÉS (RCP & NOTICES) ---
-    if (traitementRcpDecentralise) {
+    if (traitementRcpDecentralise || transfertSftpDecentralise) {
       await processerDocumentsDecentralises({
         poolCodexExtract,
         repCible,
@@ -443,23 +532,29 @@ async function main() {
         idBatch,
         db,
         dateFileStr,
-        typeTransfertSftp,
+        traitementRcpDecentralise,
+        transfertSftp: transfertSftpDecentralise,
         maxFilesToProcess
       });
     } else {
-      logger.info('Traitement des documents décentralisés (RCP & Notices) désactivé par la variable TRAITEMENT_RCP_DECENTRALISE.');
+      logger.info('Traitement et transfert des documents décentralisés désactivés.');
     }
 
     // === Export Europe Cleyrop ===
-    await processerDocumentsCentralises({
-      repCible: repCibleEU,
-      dateFileStr,
-      typeTransfertSftp,
-      idBatch,
-      db,
-      repCibleEURCPNotices, // Passage du nouveau paramètre
-      maxFilesToProcess
-    });
+    if (traitementRcpCentralise || transfertSftpCentralise) {
+      await processerDocumentsCentralises({
+        repCible: repCibleEU,
+        dateFileStr,
+        traitementRcpCentralise,
+        transfertSftp: transfertSftpCentralise,
+        idBatch,
+        db,
+        repCibleEURCPNotices, // Passage du nouveau paramètre
+        maxFilesToProcess
+      });
+    } else {
+      logger.info('Traitement et transfert des documents centralisés désactivés.');
+    }
 
   } catch (error) {
     logger.error({ err: error }, 'Erreur lors du traitement');

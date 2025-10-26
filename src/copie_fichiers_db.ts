@@ -38,19 +38,19 @@ export async function logCopieFichier(row: Omit<ListeFichiersCopiesRow, 'id'>) {
     await db.run(
       `INSERT INTO liste_fichiers_copies (
         rep_fichier_source, nom_fichier_source, rep_fichier_cible, nom_fichier_cible, code_cis, code_atc,
-        date_copie_rep_tempo, resultat_copie_rep_tempo, date_copie_sftp, resultat_copie_sftp, id_batch, type_document , lib_atc, nom_specialite
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        date_copie_rep_tempo, resultat_copie_rep_tempo, date_copie_sftp, resultat_copie_sftp, id_batch, type_document , lib_atc, nom_specialite, princeps_generique
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       row.rep_fichier_source, row.nom_fichier_source, row.rep_fichier_cible, row.nom_fichier_cible, row.code_cis, row.code_atc,
-      row.date_copie_rep_tempo, row.resultat_copie_rep_tempo, row.date_copie_sftp, row.resultat_copie_sftp, row.id_batch, row.type_document, row.lib_atc, row.nom_specialite
+      row.date_copie_rep_tempo, row.resultat_copie_rep_tempo, row.date_copie_sftp, row.resultat_copie_sftp, row.id_batch, row.type_document, row.lib_atc, row.nom_specialite, row.princeps_generique
     );
   } else {
     await db.run(
       `INSERT INTO liste_fichiers_copies (
         rep_fichier_source, nom_fichier_source, rep_fichier_cible, nom_fichier_cible, code_cis, code_atc,
-        date_copie_rep_tempo, resultat_copie_rep_tempo, date_copie_sftp, resultat_copie_sftp, id_batch, lib_atc, nom_specialite
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        date_copie_rep_tempo, resultat_copie_rep_tempo, date_copie_sftp, resultat_copie_sftp, id_batch, lib_atc, nom_specialite, princeps_generique
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       row.rep_fichier_source, row.nom_fichier_source, row.rep_fichier_cible, row.nom_fichier_cible, row.code_cis, row.code_atc,
-      row.date_copie_rep_tempo, row.resultat_copie_rep_tempo, row.date_copie_sftp, row.resultat_copie_sftp, row.id_batch, row.lib_atc, row.nom_specialite
+      row.date_copie_rep_tempo, row.resultat_copie_rep_tempo, row.date_copie_sftp, row.resultat_copie_sftp, row.id_batch, row.lib_atc, row.nom_specialite, row.princeps_generique
     );
   }
 } 

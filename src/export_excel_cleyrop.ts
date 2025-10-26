@@ -10,6 +10,7 @@ const CLEYROP_COLUMNS = [
   'code_atc', 
   'lib_atc',
   'nom_specialite',
+  'princeps_generique',
   'date_copie_sftp',
   'resultat_copie_sftp',
   'id_batch',

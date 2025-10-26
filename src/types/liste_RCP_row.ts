@@ -6,6 +6,7 @@ export type ListeRCPRow = RowDataPacket & {
   dbo_autorisation_lib_abr: string;
   dbo_classe_atc_lib_abr: string;
   dbo_classe_atc_lib_court: string;
+  code_vuprinceps: string | null;
   doc_id: number;
   hname: string;
 };

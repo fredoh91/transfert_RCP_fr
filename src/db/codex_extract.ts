@@ -49,6 +49,7 @@ export async function getListeDocuments(pool: mysql.Pool, type: 'R' | 'N'): Prom
                    v.dbo_autorisation_lib_abr,
                    v.dbo_classe_atc_lib_abr,
                    v.dbo_classe_atc_lib_court,
+                   v.code_vuprinceps,
                    mh.doc_id,
                    mh.hname
             FROM vuutil v

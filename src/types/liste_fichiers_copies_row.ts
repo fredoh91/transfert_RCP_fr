@@ -14,4 +14,5 @@ export type ListeFichiersCopiesRow = {
   type_document?: string | null;
   lib_atc?: string | null;
   nom_specialite?: string | null;
+  princeps_generique?: string | null;
 }; 

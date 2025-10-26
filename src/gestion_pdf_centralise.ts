@@ -1,9 +1,13 @@
 import fs from 'fs/promises';
 import fsSync from 'fs';
 import path from 'path';
+import https from 'https';
 import axios from 'axios';
 import { logger } from './logs_config.js';
 import { Knex } from 'knex';
+
+// Agent HTTPS pour la réutilisation des connexions (Keep-Alive)
+const httpsAgent = new https.Agent({ keepAlive: true });
 
 async function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -35,7 +39,7 @@ export async function telechargerEtRenommerPdf(
   }
 ): Promise<string | null> { 
   const { url, codeCIS, codeATC, lib_atc, nom_specialite, repCible, db, idBatch } = params;
-  const maxRetries = parseInt(process.env.DL_EMA_RETRY_COUNT || '3', 10);
+  const maxRetries = parseInt(process.env.DL_EMA_RETRY_COUNT || '5', 10);
 
   if (!url || !codeCIS || !repCible) {
     logger.error('Paramètres manquants pour telechargerEtRenommerPdf.');
@@ -123,7 +127,11 @@ export async function telechargerEtRenommerPdf(
         method: 'get',
         url: url,
         responseType: 'stream',
-        timeout: 30000 // 30 secondes de timeout
+        timeout: 30000, // 30 secondes de timeout
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36'
+        },
+        httpsAgent: httpsAgent // Utiliser l'agent Keep-Alive
       });
 
       const contentType = response.headers['content-type'];
