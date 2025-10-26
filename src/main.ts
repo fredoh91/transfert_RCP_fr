@@ -24,6 +24,11 @@ import { exportListeFichiersCopiesExcel } from './export_excel.js';
 import { transferFichierSFTP } from './sftp_transfert.js';
 import { exportListeFichiersCopiesCleyropExcel } from './export_excel_cleyrop.js';
 import { exportEuropeCleyropExcel } from './export_europe_cleyrop.js';
+import pLimit from 'p-limit';
+async function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 const db = knex(knexConfig.development);
 
 /**
@@ -74,14 +79,7 @@ async function processerDocumentsDecentralises(params: {
     for (const fichier of fichiersATransferer) {
       const subDir = fichier.type_document === 'RCP' ? 'RCP' : 'Notices';
       const localPath = path.join(repCibleFR!, subDir, fichier.nom_fichier_cible);
-      
-      if (!fsSync.existsSync(localPath)) {
-        logger.warn(`Le fichier local ${localPath} n'existe pas. Mise à jour du statut en "FICHIER LOCAL INEXISTANT".`);
-        await db('liste_fichiers_copies').where({ id: fichier.id }).update({ resultat_copie_sftp: 'FICHIER LOCAL INEXISTANT' });
-        continue;
-      }
-
-      const remoteSubDir = path.posix.join('FR', subDir);
+      const remoteSubDir = path.posix.join(path.basename(repCible!), 'FR', subDir);
       await transferFichierSFTP(localPath, remoteSubDir, fichier.nom_fichier_cible, idBatch, fichier.code_cis, fichier.code_atc, db);
     }
     return;
@@ -92,7 +90,9 @@ async function processerDocumentsDecentralises(params: {
     logger.info('Début du sous-traitement RCP.');
     const listeRcp: ListeRCPRow[] = await getListeRCP(poolCodexExtract);
     let iCptRCP: number = 0;
-    for (const rcp of listeRcp) {
+
+    const limit = pLimit(parseInt(process.env.DECENTRALISE_CONCURRENCY_LIMIT || '5', 10));
+    const rcpPromises = listeRcp.map(rcp => limit(async () => {
       iCptRCP++;
       try {
         // Déterminer le nom de fichier cible en amont
@@ -123,10 +123,15 @@ async function processerDocumentsDecentralises(params: {
             nom_specialite: rcp.nom_vu,
             princeps_generique: princepsGeneriqueValue,
           });
-          continue; // Passer au fichier suivant
+          return; // Passer au fichier suivant
         }
 
         const {statut, nouveauNom} = await copierFichierRCP(rcp.hname, rcp.code_cis, rcp.dbo_classe_atc_lib_abr, repCibleRCP!);
+        
+        // Délai de courtoisie aléatoire
+        const minDelay = parseInt(process.env.DECENTRALISE_MIN_DELAY || '200', 10);
+        const maxDelay = parseInt(process.env.DECENTRALISE_MAX_DELAY || '700', 10);
+        await sleep(Math.random() * (maxDelay - minDelay) + minDelay);
         
         let copieOK: string;
         if (statut === "FICHIER_SOURCE_INTROUVABLE") {
@@ -137,7 +142,7 @@ async function processerDocumentsDecentralises(params: {
           
           if (transfertSftp && copieOK === 'COPIE OK') {
             const localPath = path.join(repCibleRCP!, nouveauNom);
-            const remoteSubDir = path.posix.join(path.basename(path.dirname(repCibleRCP!)), 'RCP');
+            const remoteSubDir = path.posix.join(path.basename(repCible!), 'FR', 'RCP');
             await transferFichierSFTP(localPath, remoteSubDir, nouveauNom, idBatch, rcp.code_cis, rcp.dbo_classe_atc_lib_abr, db);
           }
         }
@@ -159,15 +164,16 @@ async function processerDocumentsDecentralises(params: {
           nom_specialite: rcp.nom_vu,
           princeps_generique: princepsGeneriqueValue,
         });
-      } catch (error) {
+      }
+      catch (error) {
         logger.error(`Erreur lors du traitement du RCP ${rcp.hname}:`, error);
-        continue;
       }
-      if (params.maxFilesToProcess && iCptRCP >= params.maxFilesToProcess) {
-        logger.info(`Limite de test atteinte (${params.maxFilesToProcess}) : arrêt du traitement des fichiers RCP.`);
-        break;
+      if (maxFilesToProcess && iCptRCP >= maxFilesToProcess) {
+        logger.info(`Limite de test atteinte (${maxFilesToProcess}) : arrêt du traitement des fichiers RCP.`);
+        // Pas de break ici car on est dans un map, la limite sera gérée par le filtre en amont si nécessaire
       }
-    }
+    }));
+    await Promise.allSettled(rcpPromises);
   } else {
     logger.info('Sous-traitement RCP désactivé par la variable TRAITEMENT_RCP.');
   }
@@ -177,7 +183,9 @@ async function processerDocumentsDecentralises(params: {
     logger.info('Début du sous-traitement Notices.');
     const listeNotices: ListeRCPRow[] = await getListeNotice(poolCodexExtract);
     let iCptNotice: number = 0;
-    for (const notice of listeNotices) {
+
+    const limit = pLimit(parseInt(process.env.DECENTRALISE_CONCURRENCY_LIMIT || '5', 10));
+    const noticePromises = listeNotices.map(notice => limit(async () => {
       iCptNotice++;
       try {
         // Déterminer le nom de fichier cible en amont
@@ -208,10 +216,15 @@ async function processerDocumentsDecentralises(params: {
             nom_specialite: notice.nom_vu,
             princeps_generique: princepsGeneriqueValue,
           });
-          continue; // Passer au fichier suivant
+          return; // Passer au fichier suivant
         }
 
         const {statut, nouveauNom} = await copierFichierRCP(notice.hname, notice.code_cis, notice.dbo_classe_atc_lib_abr, repCibleNotices!);
+        
+        // Délai de courtoisie aléatoire
+        const minDelay = parseInt(process.env.DECENTRALISE_MIN_DELAY || '200', 10);
+        const maxDelay = parseInt(process.env.DECENTRALISE_MAX_DELAY || '700', 10);
+        await sleep(Math.random() * (maxDelay - minDelay) + minDelay);
         
         let copieOK: string;
         if (statut === "FICHIER_SOURCE_INTROUVABLE") {
@@ -223,7 +236,7 @@ async function processerDocumentsDecentralises(params: {
         
         if (transfertSftp && copieOK === 'COPIE OK') {
           const localPath = path.join(repCibleNotices!, nouveauNom);
-          const remoteSubDir = path.posix.join(path.basename(path.dirname(repCibleNotices!)), 'Notices');
+          const remoteSubDir = path.posix.join(path.basename(repCible!), 'FR', 'Notices');
           await transferFichierSFTP(localPath, remoteSubDir, nouveauNom, idBatch, notice.code_cis, notice.dbo_classe_atc_lib_abr, db);
         }
         const princepsGeneriqueValue = notice.code_vuprinceps === null ? 'princeps' : notice.code_vuprinceps;
@@ -246,13 +259,13 @@ async function processerDocumentsDecentralises(params: {
         });
       } catch (error) {
         logger.error(`Erreur lors du traitement de la notice ${notice.hname}:`, error);
-        continue;
       }
-      if (params.maxFilesToProcess && iCptNotice >= params.maxFilesToProcess) {
-        logger.info(`Limite de test atteinte (${params.maxFilesToProcess}) : arrêt du traitement des fichiers Notices.`);
-        break;
+      if (maxFilesToProcess && iCptNotice >= maxFilesToProcess) {
+        logger.info(`Limite de test atteinte (${maxFilesToProcess}) : arrêt du traitement des fichiers Notices.`);
+        // Pas de break ici car on est dans un map, la limite sera gérée par le filtre en amont si nécessaire
       }
-    }
+    }));
+    await Promise.allSettled(noticePromises);
   } else {
     logger.info('Sous-traitement Notices désactivé par la variable TRAITEMENT_NOTICE.');
   }
@@ -305,7 +318,7 @@ async function processerDocumentsDecentralises(params: {
         .andWhere(builder => builder.where('type_document', 'RCP').orWhere('type_document', 'Notice'));
 
       if (cleyropExcelFilePath && lignesKOrestantes.length === 0) {
-        const remoteSubDir = path.basename(path.dirname(cleyropExcelFilePath)); // 'FR'
+        const remoteSubDir = path.posix.join(path.basename(repCible!), 'FR');
         const cleyropExcelFileName = path.basename(cleyropExcelFilePath);
         await transferFichierSFTP(cleyropExcelFilePath, remoteSubDir, cleyropExcelFileName, idBatch, '', '', db);
         logger.info(`Export Excel Cleyrop FR transféré sur le SFTP : ${remoteSubDir}/${cleyropExcelFileName}`);
@@ -410,7 +423,7 @@ async function processerDocumentsCentralises(params: {
     if (europeExcelFilePath) {
       logger.info(`Export Europe Cleyrop généré : ${europeExcelFilePath}`);
       if (transfertSftp) {
-        const remoteSubDir = path.basename(path.dirname(europeExcelFilePath));
+        const remoteSubDir = path.posix.join(path.basename(repCible!), 'EU');
         const europeExcelFileName = path.basename(europeExcelFilePath);
         try {
           await transferFichierSFTP(europeExcelFilePath, remoteSubDir, europeExcelFileName, idBatch, '', '', db);          

@@ -157,7 +157,9 @@ export async function exportEuropeCleyropExcel({
       });
 
       // Ajout d'un délai de courtoisie pour ne pas surcharger le serveur
-      await sleep(2500); // 2500ms de pause
+      const minDelay = parseInt(process.env.CENTRALISE_MIN_DELAY || '200', 10);
+      const maxDelay = parseInt(process.env.CENTRALISE_MAX_DELAY || '700', 10);
+      await sleep(Math.random() * (maxDelay - minDelay) + minDelay);
     }
 
     dataWithAtc.push(excelRow);
