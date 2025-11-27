@@ -6,6 +6,8 @@ import mysql from 'mysql2/promise';
 import { logger } from './logs_config.js';
 import { telechargerEtRenommerPdf } from './gestion_pdf_centralise.js'; // Nouvelle importation
 import { applyExcelFormatting } from './excel_formatter.js';
+import pLimit from 'p-limit';
+import SftpClient from 'ssh2-sftp-client';
 
 // Ajout de la fonction sleep pour le délai de courtoisie
 async function sleep(ms: number): Promise<void> {
@@ -92,7 +94,9 @@ export async function exportEuropeCleyropExcel({
   maxFilesToProcess,
   repCibleEURCPNotices,
   db,
-  idBatch
+  idBatch,
+  transfertSftp,
+  sftpClient
 }: {
   poolCodexExtract: mysql.Pool,
   repSource: string,
@@ -101,8 +105,10 @@ export async function exportEuropeCleyropExcel({
   maxFilesToProcess?: number,
   repCibleEURCPNotices: string,
   db: Knex,
-  idBatch: string
-}): Promise<string | null> {
+  idBatch: string,
+  transfertSftp: boolean,
+  sftpClient?: SftpClient
+}): Promise<{ excelFilePath: string | null; fileCount: number }> {
   // Trouver le fichier CSV du mois courant uniquement
   const now = new Date();
   const year = now.getFullYear();
@@ -113,7 +119,7 @@ export async function exportEuropeCleyropExcel({
     await fs.access(csvPath);
   } catch {
     logger.info(`Aucun fichier CSV RCP centralisé pour le mois en cours (${expectedCsvFile}) dans ${repSource}`);
-    return null;
+    return { excelFilePath: null, fileCount: 0 };
   }
   logger.info('Traitement du fichier CSV européen : ' + csvPath);
 
@@ -121,14 +127,15 @@ export async function exportEuropeCleyropExcel({
   const rows = await parseCsvFile(csvPath);
   if (rows.length === 0) {
     logger.warn('Le fichier CSV est vide.');
-    return null;
+    return { excelFilePath: null, fileCount: 0 };
   }
 
   // Préparation des données pour Excel
   // Renommer SpecId en code_cis, ajouter code_atc en 2e position
   const dataWithAtc: any[] = [];
   let iCpt = 0;
-  for (const row of rows) {
+  const limit = pLimit(parseInt(process.env.CENTRALISE_CONCURRENCY_LIMIT || '5', 10));
+  const downloadPromises = rows.map(row => limit(async () => {
     iCpt++;
     const code_cis = row['SpecId'] || '';
     const { code_atc, lib_atc, nom_specialite, code_vuprinceps } = await getAtcSpecialiteForCis(poolCodexExtract, code_cis)
@@ -153,7 +160,10 @@ export async function exportEuropeCleyropExcel({
         nom_specialite: excelRow.nom_specialite,
         repCible: repCibleEURCPNotices,
         db,
-        idBatch
+        idBatch,
+        repCiblePrincipal: repCible,
+        transfertSftp: transfertSftp,
+        sftpClient
       });
 
       // Ajout d'un délai de courtoisie pour ne pas surcharger le serveur
@@ -162,12 +172,23 @@ export async function exportEuropeCleyropExcel({
       await sleep(Math.random() * (maxDelay - minDelay) + minDelay);
     }
 
-    dataWithAtc.push(excelRow);
     if (maxFilesToProcess && iCpt >= maxFilesToProcess) {
       logger.info(`Limite de test atteinte (${maxFilesToProcess}) : arrêt du traitement du fichier CSV Europe.`);
-      break;
+      // Pas de break ici car on est dans un map, la limite sera gérée par le filtre en amont si nécessaire
     }
-  }
+    return excelRow; // Retourner la ligne traitée
+  }));
+
+  const processedRows = await Promise.allSettled(downloadPromises);
+
+  // Filtrer les résultats réussis et les ajouter à dataWithAtc
+  processedRows.forEach(result => {
+    if (result.status === 'fulfilled') {
+      dataWithAtc.push(result.value);
+    } else {
+      logger.error('Erreur lors du traitement d\'une ligne du CSV européen:', result.reason);
+    }
+  });
 
   // Création du fichier Excel
   const workbook = new ExcelJS.Workbook();
@@ -189,5 +210,5 @@ export async function exportEuropeCleyropExcel({
   const excelFilePath = path.join(repCible, excelFileName);
   await workbook.xlsx.writeFile(excelFilePath);
   logger.info('Fichier Excel européen généré : ' + excelFilePath);
-  return excelFilePath;
+  return { excelFilePath, fileCount: dataWithAtc.length };
 } 

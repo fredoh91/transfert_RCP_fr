@@ -1,110 +1,87 @@
-// @ts-expect-error: Pas de types pour ssh2-sftp-client dans node_modules
 import SftpClient from 'ssh2-sftp-client';
 import fs from 'fs';
 import path from 'path';
 import { Knex } from 'knex';
 import { logger } from './logs_config.js';
 
-
+async function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 
 export async function transferFichierSFTP(
+  sftp: SftpClient,
   localPath: string,
-  remoteSubDir: string, // ex: Extract_RCP_20250718
+  remoteSubDir: string,
   remoteFileName: string,
   idBatch: string,
   codeCIS: string,
   codeATC: string,
   db: Knex
 ): Promise<void> {
-  // logger.info(`Début transfert SFTP: ${localPath} -> ${remoteSubDir}/${remoteFileName}`);
+  logger.info(`Début transfert SFTP: ${localPath} -> ${remoteSubDir}/${remoteFileName}`);
 
-  const SFTP_HOST = process.env.SFTP_HOST;
-  const SFTP_PORT = process.env.SFTP_PORT ? parseInt(process.env.SFTP_PORT) : 22;
-  const SFTP_USER = process.env.SFTP_USER;
-  const SFTP_PRIVATE_KEY_PATH = process.env.SFTP_PRIVATE_KEY_PATH;
   const SFTP_REMOTE_BASE_DIR = process.env.SFTP_REMOTE_BASE_DIR;
-
-  if (!SFTP_HOST || !SFTP_USER || !SFTP_PRIVATE_KEY_PATH || !SFTP_REMOTE_BASE_DIR) {
-    logger.error('Paramètres SFTP manquants dans le .env. Transfert annulé.');
-    throw new Error('Paramètres SFTP manquants dans le .env');
+  if (!SFTP_REMOTE_BASE_DIR) {
+    logger.error('Variable SFTP_REMOTE_BASE_DIR manquante dans le .env. Transfert annulé.');
+    throw new Error('Variable SFTP_REMOTE_BASE_DIR manquante');
   }
-  
-  const sftp = new SftpClient();
-  const privateKey = fs.readFileSync(SFTP_PRIVATE_KEY_PATH as string);
-  const remoteDir = path.posix.join(SFTP_REMOTE_BASE_DIR as string, remoteSubDir);
+
+  const remoteDir = path.posix.join(SFTP_REMOTE_BASE_DIR, remoteSubDir);
   const remotePath = path.posix.join(remoteDir, remoteFileName);
   let resultat = 'COPIE SFTP KO';
   const dateSftp = new Date().toISOString();
-  
+
   try {
-    // logger.info(`Connexion SFTP à ${SFTP_HOST}:${SFTP_PORT} avec l'utilisateur ${SFTP_USER}`);
-    await sftp.connect({
-      host: SFTP_HOST as string,
-      port: SFTP_PORT,
-      username: SFTP_USER as string,
-      privateKey
-    });
-    // logger.info('Connexion SFTP réussie');
-    
-    // Créer le dossier distant si besoin
+    // Vérifier si le fichier existe déjà et a la même taille
     try {
-      logger.info(`Création du répertoire distant: ${remoteDir}`);
-      await sftp.mkdir(remoteDir, true);
-      logger.info('Répertoire distant créé avec succès');
-    } catch (err) {
-      logger.error({ err }, `Erreur lors de la création du répertoire distant: ${remoteDir}`);
-    }
-    // Vérifier l'existence du répertoire
-    const dirExists = await sftp.exists(remoteDir);
-    if (!dirExists) {
-      logger.error(`Le répertoire distant ${remoteDir} n'existe pas après tentative de création. Arrêt du script.`);
-      await sftp.end();
-      throw new Error(`Répertoire distant non créé: ${remoteDir}`);
-    }
-    
-    // Transférer le fichier
-    // logger.info(`Transfert du fichier: ${localPath} -> ${remotePath}`);
-    await sftp.fastPut(localPath, remotePath);
-    // logger.info('Transfert SFTP terminé');
-    
-    // Vérifier la copie en comparant les tailles de fichiers
-    try {      // Récupérer la taille du fichier local
-      const localStats = fs.statSync(localPath);
-      const localSize = localStats.size;
-      // logger.info(`Taille fichier local: ${localSize} octets`);
-      
-      // Récupérer la taille du fichier distant
       const remoteStats = await sftp.stat(remotePath);
-      const remoteSize = remoteStats.size;
-      // logger.info(`Taille fichier distant: ${remoteSize} octets`);
-      
-      // Comparer les tailles
-      if (localSize === remoteSize) {
-        resultat = 'COPIE SFTP OK';
-        // logger.info('✅ Tailles identiques - copie SFTP réussie');
-      } else {
-        resultat = 'COPIE SFTP KO';
-        logger.error(`❌ Tailles différentes: local=${localSize}, distant=${remoteSize}`);
+      const localStats = fs.statSync(localPath);
+      if (remoteStats.size === localStats.size) {
+        logger.info(`Fichier déjà présent sur le serveur avec la même taille. Omission: ${remotePath}`);
+        resultat = 'COPIE OK - DEJA PRESENT';
+        return; // Le bloc finally s'exécutera
       }
-    } catch (err) {
+    } catch (err: any) {
+      // Si l'erreur est "No such file", on ignore et on continue pour uploader.
+      // Sinon, c'est une autre erreur (ex: permission) qu'on ne gère pas ici, donc on la relance.
+      if (err.code !== 'ENOENT' && err.message !== 'No such file') {
+        throw err;
+      }
+    }
+
+    // Si on arrive ici, le fichier n'existe pas ou a une taille différente. On procède à l'envoi.
+    await sftp.mkdir(remoteDir, true);
+
+    const minDelay = parseInt(process.env.SFTP_MIN_DELAY || '100', 10);
+    const maxDelay = parseInt(process.env.SFTP_MAX_DELAY || '300', 10);
+    await sleep(Math.random() * (maxDelay - minDelay) + minDelay);
+
+    await sftp.fastPut(localPath, remotePath);
+
+    const localStats = fs.statSync(localPath);
+    const remoteStats = await sftp.stat(remotePath);
+
+    if (localStats.size === remoteStats.size) {
+      resultat = 'COPIE SFTP OK';
+      logger.info(`✅ Copie SFTP réussie: ${remotePath} (Taille: ${localStats.size})`);
+    } else {
       resultat = 'COPIE SFTP KO';
-      logger.error({ err }, 'Erreur lors de la vérification des tailles');
+      logger.error(`❌ Tailles différentes pour ${remotePath}: local=${localStats.size}, distant=${remoteStats.size}`);
     }
   } catch (err) {
     resultat = 'COPIE SFTP KO';
-    logger.error({ err }, `Erreur lors du transfert SFTP: ${localPath}`);
+    logger.error({ err }, `Erreur lors du transfert SFTP de ${localPath} vers ${remotePath}`);
+    // On propage l'erreur pour que le système de retry puisse la catcher
+    throw err;
   } finally {
-    await sftp.end();
     logger.info(`Fin transfert SFTP: ${resultat}`);
-
-    // Mettre à jour la table SQLite, uniquement si ce n'est pas un fichier Excel
-    if (codeCIS) {
-      await db('liste_fichiers_copies')
-        .where({ id_batch: idBatch, code_cis: codeCIS, code_atc: codeATC })
-        .update({
-          date_copie_sftp: dateSftp,
-          resultat_copie_sftp: resultat
-        });
-    }
+    // La mise à jour de la base de données se fait ici pour tous les cas (succès, échec, déjà présent)
+    // Le where est sur id_batch et nom_fichier_cible, ce qui devrait être unique par batch
+    await db('liste_fichiers_copies')
+      .where({ id_batch: idBatch, nom_fichier_cible: remoteFileName })
+      .update({
+        date_copie_sftp: dateSftp,
+        resultat_copie_sftp: resultat
+      });
   }
-} 
+}

@@ -5,6 +5,9 @@ import https from 'https';
 import axios from 'axios';
 import { logger } from './logs_config.js';
 import { Knex } from 'knex';
+import { transferFichierSFTP } from './sftp_transfert.js';
+
+import SftpClient from 'ssh2-sftp-client';
 
 // Agent HTTPS pour la réutilisation des connexions (Keep-Alive)
 const httpsAgent = new https.Agent({ keepAlive: true });
@@ -17,14 +20,6 @@ async function sleep(ms: number): Promise<void> {
  * Télécharge un fichier PDF depuis une URL, le renomme et le copie dans le répertoire cible.
  * Gère le logging en base de données et les re-tentatives.
  * @param params Objet contenant les paramètres nécessaires.
- * @param params.url L'URL du fichier PDF à télécharger.
- * @param params.codeCIS Le code CIS pour le renommage.
- * @param params.codeATC Le code ATC pour le renommage.
- * @param url L'URL du fichier PDF à télécharger.
- * @param codeCIS Le code CIS pour le renommage.
- * @param codeATC Le code ATC pour le renommage.
- * @param repCible Le répertoire où copier le fichier renommé.
- * @returns Le chemin complet du fichier PDF renommé et copié, ou null en cas d'erreur.
  */
 export async function telechargerEtRenommerPdf(
   params: {
@@ -35,10 +30,13 @@ export async function telechargerEtRenommerPdf(
     nom_specialite: string,
     repCible: string,
     db: Knex,
-    idBatch: string
+    idBatch: string,
+    repCiblePrincipal: string,
+    transfertSftp: boolean,
+    sftpClient?: SftpClient, // Ajout du client SFTP optionnel
   }
 ): Promise<string | null> { 
-  const { url, codeCIS, codeATC, lib_atc, nom_specialite, repCible, db, idBatch } = params;
+  const { url, codeCIS, codeATC, lib_atc, nom_specialite, repCible, db, idBatch, sftpClient } = params;
   const maxRetries = parseInt(process.env.DL_EMA_RETRY_COUNT || '5', 10);
 
   if (!url || !codeCIS || !repCible) {
@@ -46,21 +44,37 @@ export async function telechargerEtRenommerPdf(
     return null;
   }
 
-  // Nettoyer le code ATC pour enlever les caractères invalides pour un nom de fichier
   const sanitizedCodeATC = (codeATC || '').replace(/[\\/]/g, '');
-
-  // Compléter le code ATC à droite par des underscores si moins de 7 caractères
   const codeATCComplet = sanitizedCodeATC.length < 7 ? sanitizedCodeATC.padEnd(7, "_") : sanitizedCodeATC;
-
-  // Construire le nouveau nom de fichier
   const nouveauNom = `E_${codeCIS}_${codeATCComplet}.pdf`;
   const cheminCible = path.join(repCible, nouveauNom);
 
-  // Vérifier si le fichier existe déjà AVANT de faire quoi que ce soit
   try {
     await fs.access(cheminCible);
     logger.info(`Fichier déjà présent (traitement principal) : ${cheminCible}`);
-    // Créer l'entrée de log avec le statut spécifique
+    
+    let resultatCopieTempo = 'COPIE OK - fichier deja present';
+    let dateCopieSftp = null;
+    let resultatCopieSftp = null;
+
+    if (params.transfertSftp && sftpClient) {
+      const remoteSubDir = path.posix.join(path.basename(path.dirname(params.repCiblePrincipal)), 'EU', 'RCP_Notices');
+      try {
+        await transferFichierSFTP(sftpClient, cheminCible, remoteSubDir, nouveauNom, idBatch, codeCIS, codeATC, db);
+        // Le statut SFTP est mis à jour dans transferFichierSFTP, on le récupère
+        const logEntry = await db('liste_fichiers_copies').where({ id_batch: idBatch, nom_fichier_cible: nouveauNom }).first();
+        resultatCopieSftp = logEntry?.resultat_copie_sftp || 'COPIE SFTP KO';
+        dateCopieSftp = logEntry?.date_copie_sftp || new Date().toISOString();
+      } catch (sftpError) {
+        logger.error({ sftpError }, `Erreur lors du transfert SFTP du fichier déjà présent ${cheminCible}`);
+        resultatCopieSftp = 'COPIE SFTP KO';
+        dateCopieSftp = new Date().toISOString();
+      }
+    } else if (params.transfertSftp) {
+        logger.warn('Transfert SFTP demandé mais aucun client SFTP n\'a été fourni.');
+        resultatCopieSftp = 'CLIENT SFTP MANQUANT';
+    }
+
     const urlObject = new URL(url);
     const sourceFileName = path.basename(urlObject.pathname);
     const sourceDir = path.dirname(urlObject.pathname);
@@ -77,14 +91,15 @@ export async function telechargerEtRenommerPdf(
       lib_atc: lib_atc,
       nom_specialite: nom_specialite,
       date_copie_rep_tempo: new Date().toISOString(),
-      resultat_copie_rep_tempo: 'COPIE OK - fichier deja present',
+      resultat_copie_rep_tempo: resultatCopieTempo,
+      date_copie_sftp: dateCopieSftp,
+      resultat_copie_sftp: resultatCopieSftp,
     });
     return cheminCible;
   } catch (err) {
-    // Fichier non trouvé, on continue pour le télécharger
+    // Fichier non trouvé, on continue
   }
 
-  // 1. Créer l'entrée dans la base de données
   let logId: number | undefined;
   try {
     const urlObject = new URL(url);
@@ -110,14 +125,13 @@ export async function telechargerEtRenommerPdf(
     logId = ids[0].id;
   } catch (dbError) {
     logger.error({ err: dbError }, `Erreur lors de la création de l'entrée de log pour ${url}`);
-    return null; // On ne peut pas continuer sans log
+    return null;
   }
 
-  // 2. Tenter le téléchargement avec re-tentatives
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       if (attempt > 1) {
-        const delay = 1000 * Math.pow(2, attempt - 1); // Délai exponentiel
+        const delay = 1000 * Math.pow(2, attempt - 1);
         logger.warn(`Nouvelle tentative de téléchargement dans ${delay / 1000}s... (Tentative ${attempt}/${maxRetries})`);
         await sleep(delay);
       }
@@ -127,11 +141,11 @@ export async function telechargerEtRenommerPdf(
         method: 'get',
         url: url,
         responseType: 'stream',
-        timeout: 30000, // 30 secondes de timeout
+        timeout: 30000,
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36'
         },
-        httpsAgent: httpsAgent // Utiliser l'agent Keep-Alive
+        httpsAgent: httpsAgent
       });
 
       const contentType = response.headers['content-type'];
@@ -149,6 +163,22 @@ export async function telechargerEtRenommerPdf(
         writer.on('finish', async () => {
           logger.info(`PDF téléchargé et renommé : ${cheminCible}`);
           await db('liste_fichiers_copies').where({ id: logId }).update({ resultat_copie_rep_tempo: 'COPIE OK' });
+
+          if (params.transfertSftp && sftpClient) {
+            const remoteSubDir = path.posix.join(path.basename(path.dirname(params.repCiblePrincipal)), 'EU', 'RCP_Notices');
+            try {
+              await transferFichierSFTP(sftpClient, cheminCible, remoteSubDir, nouveauNom, idBatch, codeCIS, codeATC, db);
+            } catch (sftpError) {
+              logger.error({ sftpError }, `Erreur lors du transfert SFTP du fichier téléchargé ${cheminCible}`);
+              // Le statut est déjà mis à jour dans transferFichierSFTP en cas d'erreur
+            }
+          } else if (params.transfertSftp) {
+            logger.warn('Transfert SFTP demandé mais aucun client SFTP n\'a été fourni.');
+            await db('liste_fichiers_copies').where({ id: logId }).update({
+                date_copie_sftp: new Date().toISOString(),
+                resultat_copie_sftp: 'CLIENT SFTP MANQUANT'
+            });
+          }
           resolve();
         });
         writer.on('error', (err: Error) => {
@@ -156,7 +186,7 @@ export async function telechargerEtRenommerPdf(
           reject(err);
         });
       });
-      return cheminCible; // Succès, on sort de la boucle
+      return cheminCible;
 
     } catch (error) {
       let errorMsg = 'ERREUR_INCONNUE';
@@ -167,7 +197,6 @@ export async function telechargerEtRenommerPdf(
         logger.error(`Erreur inattendue lors du téléchargement de ${url}:`, error);
       }
 
-      // Mettre à jour le log avec l'erreur
       await db('liste_fichiers_copies').where({ id: logId }).update({ resultat_copie_rep_tempo: errorMsg });
 
       if (attempt === maxRetries) {
@@ -176,5 +205,5 @@ export async function telechargerEtRenommerPdf(
       }
     }
   }
-  return null; // Ne devrait pas être atteint
+  return null;
 }
