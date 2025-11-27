@@ -12,7 +12,9 @@ import { applyExcelFormatting } from './excel_formatter.js';
  * @returns Le chemin du fichier Excel généré
  */
 export async function exportListeFichiersCopiesExcel(db: Knex, idBatch: string, repCible: string, dateFileStr: string): Promise<string | null> {
-  const rows = await db('liste_fichiers_copies').where({ id_batch: idBatch });
+  const rows = await db('liste_fichiers_copies')
+    .where({ id_batch: idBatch })
+    .whereNot('type_document', 'RCP_Notice_EU');
   if (rows.length === 0) return null;
 
   const workbook = new ExcelJS.Workbook();

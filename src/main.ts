@@ -91,7 +91,11 @@ async function processerDocumentsDecentralises(params: {
   // --- TRAITEMENT RCP ---
   if (traitementRcp) {
     logger.info('Début du sous-traitement RCP.');
-    const listeRcp: ListeRCPRow[] = await getListeRCP(poolCodexExtract);
+    let listeRcp: ListeRCPRow[] = await getListeRCP(poolCodexExtract);
+    if (maxFilesToProcess) {
+      logger.info(`Application de la limite de ${maxFilesToProcess} fichiers pour les RCP.`);
+      listeRcp = listeRcp.slice(0, maxFilesToProcess);
+    }
     fileCount += listeRcp.length;
     let iCptRCP: number = 0;
 
@@ -202,7 +206,11 @@ async function processerDocumentsDecentralises(params: {
   // --- TRAITEMENT NOTICES ---
   if (traitementNotice) {
     logger.info('Début du sous-traitement Notices.');
-    const listeNotices: ListeRCPRow[] = await getListeNotice(poolCodexExtract);
+    let listeNotices: ListeRCPRow[] = await getListeNotice(poolCodexExtract);
+    if (maxFilesToProcess) {
+      logger.info(`Application de la limite de ${maxFilesToProcess} fichiers pour les Notices.`);
+      listeNotices = listeNotices.slice(0, maxFilesToProcess);
+    }
     fileCount += listeNotices.length;
     let iCptNotice: number = 0;
 
@@ -377,17 +385,18 @@ async function processerDocumentsDecentralises(params: {
  * Génère un fichier Excel à partir d'un CSV et le transfère par SFTP.
  */
 async function processerDocumentsCentralises(params: {
+  poolCodexExtract: mysql.Pool, // Ajout du pool
   repCible?: string,
   dateFileStr: string,
   traitementRcpCentralise: boolean,
   transfertSftp: boolean,
   idBatch: string,
   db: knex.Knex, 
-  repCibleEURCPNotices?: string, // Nouveau paramètre
+  repCibleEURCPNotices?: string,
   maxFilesToProcess?: number,
-  sftpClient?: SftpClient // Nouveau paramètre
+  sftpClient?: SftpClient
 }): Promise<number> {
-  const { repCible, dateFileStr, traitementRcpCentralise, transfertSftp, idBatch, db, repCibleEURCPNotices, maxFilesToProcess, sftpClient } = params;
+  const { poolCodexExtract, repCible, dateFileStr, traitementRcpCentralise, transfertSftp, idBatch, db, repCibleEURCPNotices, maxFilesToProcess, sftpClient } = params;
   const sftp = sftpClient; // expose `sftp` pour les appels existants
   let fileCount = 0;
 
@@ -450,11 +459,9 @@ async function processerDocumentsCentralises(params: {
   }
 
   logger.info('Lancement du traitement des documents centralisés (Europe)...');
-  let poolEurope: mysql.Pool | null = null;
   try {
-    poolEurope = await createPoolCodexExtract();
     const { excelFilePath: europeExcelFilePath, fileCount: processedFileCount } = await exportEuropeCleyropExcel({
-      poolCodexExtract: poolEurope,
+      poolCodexExtract, // Utilisation du pool passé en paramètre
       repSource: repSourceEurope,
       repCible: repCible,
       dateFileStr, 
@@ -523,10 +530,6 @@ async function processerDocumentsCentralises(params: {
     }
   } catch (err) {
     logger.error({ err }, 'Erreur lors de la génération de l\'export Europe Cleyrop');
-  } finally {
-    if (poolEurope) {
-      await closePoolCodexExtract();
-    }
   }
   return fileCount;
 }
@@ -671,6 +674,7 @@ async function main() {
     });
 
     const centralisePromise = processerDocumentsCentralises({
+      poolCodexExtract, // Ajout du pool
       repCible: repCibleEU,
       dateFileStr,
       traitementRcpCentralise,
@@ -727,6 +731,7 @@ async function main() {
     }
     // Enregistrement de la date de fin et du nombre de tables extraites
     logger.info('Fin traitement');
+    await closePoolCodexExtract(); // Fermeture du pool Codex
     await db.destroy(); // <-- doit rester en dernier
   }
 }

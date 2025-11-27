@@ -18,10 +18,15 @@ export async function createPoolCodexExtract(): Promise<mysql.Pool> {
                 queueLimit: 0
             });
             logger.info('Pool de connexions Codex Extract cree avec succes');
+            // Ajout d'un test de connexion pour échouer rapidement si les identifiants sont mauvais
+            const connection = await poolCodexExtract.getConnection();
+            await connection.ping();
+            connection.release();
+            logger.info('Connexion à la base de données Codex Extract réussie.');
         }
         return poolCodexExtract;
     } catch (error) {
-        logger.error({ err: error }, 'Erreur lors de la creation du pool de connexions Codex Extract');
+        logger.error({ err: error }, 'Erreur critique lors de la création du pool ou de la connexion à la base de données Codex Extract. Veuillez vérifier les variables d\'environnement CODEX_extract_* dans votre fichier .env ou que le serveur de base de données est bien démarré.');
         throw error;
     }
 }

@@ -124,23 +124,57 @@ export async function exportEuropeCleyropExcel({
   logger.info('Traitement du fichier CSV européen : ' + csvPath);
 
   // Lecture et parsing du CSV
-  const rows = await parseCsvFile(csvPath);
+  let rows = await parseCsvFile(csvPath);
   if (rows.length === 0) {
     logger.warn('Le fichier CSV est vide.');
     return { excelFilePath: null, fileCount: 0 };
   }
 
+  // Application de la limite de fichiers si elle est définie
+  if (maxFilesToProcess) {
+    logger.info(`Application de la limite de ${maxFilesToProcess} fichiers pour le traitement Europe.`);
+    rows = rows.slice(0, maxFilesToProcess);
+  }
+
   // Préparation des données pour Excel
   // Renommer SpecId en code_cis, ajouter code_atc en 2e position
   const dataWithAtc: any[] = [];
-  let iCpt = 0;
   const limit = pLimit(parseInt(process.env.CENTRALISE_CONCURRENCY_LIMIT || '5', 10));
   const downloadPromises = rows.map(row => limit(async () => {
-    iCpt++;
     const code_cis = row['SpecId'] || '';
     const { code_atc, lib_atc, nom_specialite, code_vuprinceps } = await getAtcSpecialiteForCis(poolCodexExtract, code_cis)
     const princepsGeneriqueValue = code_vuprinceps === null ? 'princeps' : code_vuprinceps;
+    
+    let nom_fichier_cible = ''; // Initialisation
+
+    // Télécharger et renommer le PDF si une URL est présente
+    if (row['UrlEpar']) {
+      const cheminCible = await telechargerEtRenommerPdf({
+        url: row['UrlEpar'],
+        codeCIS: code_cis,
+        codeATC: code_atc,
+        lib_atc: lib_atc,
+        nom_specialite: nom_specialite,
+        repCible: repCibleEURCPNotices,
+        db,
+        idBatch,
+        repCiblePrincipal: repCible,
+        transfertSftp: transfertSftp,
+        sftpClient
+      });
+
+      if (cheminCible) {
+        nom_fichier_cible = path.basename(cheminCible);
+      }
+
+      // Ajout d'un délai de courtoisie pour ne pas surcharger le serveur
+      const minDelay = parseInt(process.env.CENTRALISE_MIN_DELAY || '200', 10);
+      const maxDelay = parseInt(process.env.CENTRALISE_MAX_DELAY || '700', 10);
+      await sleep(Math.random() * (maxDelay - minDelay) + minDelay);
+    }
+    
     const excelRow = {
+      nom_fichier_cible,
       code_cis,
       code_atc,
       lib_atc,
@@ -150,32 +184,6 @@ export async function exportEuropeCleyropExcel({
       UrlEpar: row['UrlEpar'] || ''
     };
 
-    // Télécharger et renommer le PDF si une URL est présente
-    if (excelRow.UrlEpar) {
-      await telechargerEtRenommerPdf({
-        url: excelRow.UrlEpar,
-        codeCIS: excelRow.code_cis,
-        codeATC: excelRow.code_atc,
-        lib_atc: excelRow.lib_atc,
-        nom_specialite: excelRow.nom_specialite,
-        repCible: repCibleEURCPNotices,
-        db,
-        idBatch,
-        repCiblePrincipal: repCible,
-        transfertSftp: transfertSftp,
-        sftpClient
-      });
-
-      // Ajout d'un délai de courtoisie pour ne pas surcharger le serveur
-      const minDelay = parseInt(process.env.CENTRALISE_MIN_DELAY || '200', 10);
-      const maxDelay = parseInt(process.env.CENTRALISE_MAX_DELAY || '700', 10);
-      await sleep(Math.random() * (maxDelay - minDelay) + minDelay);
-    }
-
-    if (maxFilesToProcess && iCpt >= maxFilesToProcess) {
-      logger.info(`Limite de test atteinte (${maxFilesToProcess}) : arrêt du traitement du fichier CSV Europe.`);
-      // Pas de break ici car on est dans un map, la limite sera gérée par le filtre en amont si nécessaire
-    }
     return excelRow; // Retourner la ligne traitée
   }));
 
@@ -194,6 +202,7 @@ export async function exportEuropeCleyropExcel({
   const workbook = new ExcelJS.Workbook();
   const worksheet = workbook.addWorksheet('Europe_Cleyrop');
   worksheet.columns = [
+    { header: 'nom_fichier_cible', key: 'nom_fichier_cible' },
     { header: 'code_cis', key: 'code_cis' },
     { header: 'code_atc', key: 'code_atc' },
     { header: 'lib_atc', key: 'lib_atc' },

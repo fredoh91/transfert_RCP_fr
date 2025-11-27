@@ -4,7 +4,6 @@ import { Knex } from 'knex';
 import { applyExcelFormatting } from './excel_formatter.js';
 
 const CLEYROP_COLUMNS = [
-  'id',
   'nom_fichier_cible',
   'code_cis',
   'code_atc', 
@@ -26,7 +25,9 @@ const CLEYROP_COLUMNS = [
  * @returns Le chemin du fichier Excel généré
  */
 export async function exportListeFichiersCopiesCleyropExcel(db: Knex, idBatch: string, repCible: string, dateFileStr: string): Promise<string | null> {
-  const rows = await db('liste_fichiers_copies').where({ id_batch: idBatch });
+  const rows = await db('liste_fichiers_copies')
+    .where({ id_batch: idBatch })
+    .whereNot('type_document', 'RCP_Notice_EU');
   if (rows.length === 0) return null;
 
   // Ne garder que les colonnes demandées
