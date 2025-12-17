@@ -3,18 +3,26 @@ import path from 'path';
 import ExcelJS from 'exceljs';
 import { Knex } from 'knex';
 import mysql from 'mysql2/promise';
-import { logger } from './logs_config.js';
+import { logger } from '../logs_config.js';
 import { telechargerEtRenommerPdf } from './gestion_pdf_centralise.js'; // Nouvelle importation
-import { applyExcelFormatting } from './excel_formatter.js';
+import { applyExcelFormatting } from '../exportExcel/excel_formatter.js';
 import pLimit from 'p-limit';
 import SftpClient from 'ssh2-sftp-client';
 
-// Ajout de la fonction sleep pour le délai de courtoisie
+/**
+ * Ajout de la fonction sleep pour le délai de courtoisie
+ * 
+ */
 async function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-// Utilitaire pour parser un CSV simple (séparateur ;)
+/**
+ * Utilitaire pour parser un CSV simple (séparateur ;)
+ * 
+ * @param filePath 
+ * @returns 
+ */
 async function parseCsvFile(filePath: string): Promise<any[]> {
   const content = await fs.readFile(filePath, 'utf-8');
   const lines = content.split(/\r?\n/).filter(Boolean);
@@ -30,7 +38,14 @@ async function parseCsvFile(filePath: string): Promise<any[]> {
   });
 }
 
-// Récupère le code ATC pour un code_cis donné
+
+/**
+ * Récupère le code ATC pour un code_cis donné
+ * 
+ * @param pool mysql.Pool connection pool 
+ * @param code_cis 
+ * @returns Promise<string> code ATC ('' si introuvable)
+ */
 async function getCodeAtcForCis(pool: mysql.Pool, code_cis: string): Promise<string> {
   let connection: mysql.PoolConnection | null = null;
   try {
@@ -52,7 +67,16 @@ async function getCodeAtcForCis(pool: mysql.Pool, code_cis: string): Promise<str
     if (connection) connection.release();
   }
 }
+
+
 // Récupère le code ATC pour un code_cis donné
+
+/**
+ * 
+ * @param pool mysql.Pool connection pool 
+ * @param code_cis 
+ * @returns Promise<{code_atc: string, lib_atc: string, nom_specialite: string, code_vuprinceps: string | null}>
+ */
 async function getAtcSpecialiteForCis(pool: mysql.Pool, code_cis: string): Promise<{code_atc: string, lib_atc: string, nom_specialite: string, code_vuprinceps: string | null}> {
   let connection: mysql.PoolConnection | null = null;
   try {
@@ -73,7 +97,8 @@ async function getAtcSpecialiteForCis(pool: mysql.Pool, code_cis: string): Promi
       const code_atc = (rows[0] as any).CodeATC_5 || '';
       const lib_atc = (rows[0] as any).LibATC || '';
       const nom_specialite = (rows[0] as any).NomSpecialite || '';
-      const code_vuprinceps = (rows[0] as any).code_vuprinceps || null;
+      // const code_vuprinceps = (rows[0] as any).code_vuprinceps || null;
+      const code_vuprinceps = (rows[0] as any).code_vuprinceps === null ? 'princeps_ou_pas_de_generique' : (rows[0] as any).code_vuprinceps;
       return { code_atc, lib_atc, nom_specialite, code_vuprinceps };
     }
     return { code_atc: 'N/A', lib_atc: 'N/A', nom_specialite: 'N/A', code_vuprinceps: null };
@@ -85,30 +110,29 @@ async function getAtcSpecialiteForCis(pool: mysql.Pool, code_cis: string): Promi
   }
 }
 
-// Fonction principale d'export
-export async function exportEuropeCleyropExcel({
+/**
+ * Fonction principale d'export
+ * 
+ * @param param0 
+ * @returns 
+ */
+export async function getDonneesEuropeCleyrop({
   poolCodexExtract,
   repSource,
-  repCible,
-  dateFileStr,
   maxFilesToProcess,
   repCibleEURCPNotices,
   db,
   idBatch,
-  transfertSftp,
-  sftpClient
+  repCiblePrincipal // Ajout du repCiblePrincipal pour telechargerEtRenommerPdf
 }: {
   poolCodexExtract: mysql.Pool,
   repSource: string,
-  repCible: string,
-  dateFileStr: string,
   maxFilesToProcess?: number,
   repCibleEURCPNotices: string,
   db: Knex,
   idBatch: string,
-  transfertSftp: boolean,
-  sftpClient?: SftpClient
-}): Promise<{ excelFilePath: string | null; fileCount: number }> {
+  repCiblePrincipal: string // Nouveau paramètre obligatoire
+}): Promise<{ data: any[]; fileCount: number }> {
   // Trouver le fichier CSV du mois courant uniquement
   const now = new Date();
   const year = now.getFullYear();
@@ -119,7 +143,7 @@ export async function exportEuropeCleyropExcel({
     await fs.access(csvPath);
   } catch {
     logger.info(`Aucun fichier CSV RCP centralisé pour le mois en cours (${expectedCsvFile}) dans ${repSource}`);
-    return { excelFilePath: null, fileCount: 0 };
+    return { data: [], fileCount: 0 };
   }
   logger.info('Traitement du fichier CSV européen : ' + csvPath);
 
@@ -127,7 +151,7 @@ export async function exportEuropeCleyropExcel({
   let rows = await parseCsvFile(csvPath);
   if (rows.length === 0) {
     logger.warn('Le fichier CSV est vide.');
-    return { excelFilePath: null, fileCount: 0 };
+    return { data: [], fileCount: 0 };
   }
 
   // Application de la limite de fichiers si elle est définie
@@ -136,15 +160,14 @@ export async function exportEuropeCleyropExcel({
     rows = rows.slice(0, maxFilesToProcess);
   }
 
-  // Préparation des données pour Excel
-  // Renommer SpecId en code_cis, ajouter code_atc en 2e position
+  // Préparation des données
   const dataWithAtc: any[] = [];
   const limit = pLimit(parseInt(process.env.CENTRALISE_CONCURRENCY_LIMIT || '5', 10));
   const downloadPromises = rows.map(row => limit(async () => {
     const code_cis = row['SpecId'] || '';
     const { code_atc, lib_atc, nom_specialite, code_vuprinceps } = await getAtcSpecialiteForCis(poolCodexExtract, code_cis)
-    const princepsGeneriqueValue = code_vuprinceps === null ? 'princeps' : code_vuprinceps;
-    
+    // const princepsGeneriqueValue = code_vuprinceps === null ? 'princeps' : code_vuprinceps;
+    const princepsGeneriqueValue = code_vuprinceps === null ? 'princeps_ou_pas_de_generique' : code_vuprinceps;
     let nom_fichier_cible = ''; // Initialisation
 
     // Télécharger et renommer le PDF si une URL est présente
@@ -158,9 +181,9 @@ export async function exportEuropeCleyropExcel({
         repCible: repCibleEURCPNotices,
         db,
         idBatch,
-        repCiblePrincipal: repCible,
-        transfertSftp: transfertSftp,
-        sftpClient
+        repCiblePrincipal: repCiblePrincipal, // Utilisation du nouveau paramètre
+        princeps_generique: princepsGeneriqueValue,
+
       });
 
       if (cheminCible) {
@@ -173,7 +196,7 @@ export async function exportEuropeCleyropExcel({
       await sleep(Math.random() * (maxDelay - minDelay) + minDelay);
     }
     
-    const excelRow = {
+    const dataRow = {
       nom_fichier_cible,
       code_cis,
       code_atc,
@@ -181,10 +204,12 @@ export async function exportEuropeCleyropExcel({
       nom_specialite,
       princeps_generique: princepsGeneriqueValue,
       Product_Number: row['Product_Number'] || '',
-      UrlEpar: row['UrlEpar'] || ''
+      UrlEpar: row['UrlEpar'] || '',
+      type_document: 'RCP_Notice_EU', // Ajout du type de document pour l'export unifié
+      id_batch: idBatch // Ajout de l'id_batch pour l'export unifié
     };
 
-    return excelRow; // Retourner la ligne traitée
+    return dataRow; // Retourner la ligne traitée
   }));
 
   const processedRows = await Promise.allSettled(downloadPromises);
@@ -198,26 +223,5 @@ export async function exportEuropeCleyropExcel({
     }
   });
 
-  // Création du fichier Excel
-  const workbook = new ExcelJS.Workbook();
-  const worksheet = workbook.addWorksheet('Europe_Cleyrop');
-  worksheet.columns = [
-    { header: 'nom_fichier_cible', key: 'nom_fichier_cible' },
-    { header: 'code_cis', key: 'code_cis' },
-    { header: 'code_atc', key: 'code_atc' },
-    { header: 'lib_atc', key: 'lib_atc' },
-    { header: 'nom_specialite', key: 'nom_specialite' },
-    { header: 'princeps_generique', key: 'princeps_generique' },
-    { header: 'Product_Number', key: 'Product_Number' },
-    { header: 'UrlEpar', key: 'UrlEpar' }
-  ];
-  dataWithAtc.forEach(row => worksheet.addRow(row));
-
-  applyExcelFormatting(worksheet);
-
-  const excelFileName = `transfert_RCP_europe_cleyrop_${dateFileStr}.xlsx`;
-  const excelFilePath = path.join(repCible, excelFileName);
-  await workbook.xlsx.writeFile(excelFilePath);
-  logger.info('Fichier Excel européen généré : ' + excelFilePath);
-  return { excelFilePath, fileCount: dataWithAtc.length };
+  return { data: dataWithAtc, fileCount: dataWithAtc.length };
 } 

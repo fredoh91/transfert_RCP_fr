@@ -1,7 +1,7 @@
 import sqlite3 from 'sqlite3';
 import { open, Database } from 'sqlite';
 import path from 'path';
-import { ListeFichiersCopiesRow } from './types/liste_fichiers_copies_row';
+import { ListeFichiersCopiesRow } from '../types/liste_fichiers_copies_row';
 
 // Chemin du fichier SQLite (dans le dossier logs)
 const dbPath = path.join(process.cwd(), 'logs', 'copie_fichiers.db');

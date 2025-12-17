@@ -3,9 +3,9 @@ import fsSync from 'fs';
 import path from 'path';
 import https from 'https';
 import axios from 'axios';
-import { logger } from './logs_config.js';
+import { logger } from '../logs_config.js';
 import { Knex } from 'knex';
-import { transferFichierSFTP } from './sftp_transfert.js';
+import { transferFichierSFTP } from '../transfert/sftp_transfert.js';
 
 import SftpClient from 'ssh2-sftp-client';
 
@@ -32,11 +32,10 @@ export async function telechargerEtRenommerPdf(
     db: Knex,
     idBatch: string,
     repCiblePrincipal: string,
-    transfertSftp: boolean,
-    sftpClient?: SftpClient, // Ajout du client SFTP optionnel
+    princeps_generique: string,
   }
 ): Promise<string | null> { 
-  const { url, codeCIS, codeATC, lib_atc, nom_specialite, repCible, db, idBatch, sftpClient } = params;
+  const { url, codeCIS, codeATC, lib_atc, nom_specialite, repCible, db, idBatch, repCiblePrincipal, princeps_generique} = params;
   const maxRetries = parseInt(process.env.DL_EMA_RETRY_COUNT || '5', 10);
 
   if (!url || !codeCIS || !repCible) {
@@ -57,24 +56,6 @@ export async function telechargerEtRenommerPdf(
     let dateCopieSftp = null;
     let resultatCopieSftp = null;
 
-    if (params.transfertSftp && sftpClient) {
-      const remoteSubDir = path.posix.join(path.basename(path.dirname(params.repCiblePrincipal)), 'EU', 'RCP_Notices');
-      try {
-        await transferFichierSFTP(sftpClient, cheminCible, remoteSubDir, nouveauNom, idBatch, codeCIS, codeATC, db);
-        // Le statut SFTP est mis à jour dans transferFichierSFTP, on le récupère
-        const logEntry = await db('liste_fichiers_copies').where({ id_batch: idBatch, nom_fichier_cible: nouveauNom }).first();
-        resultatCopieSftp = logEntry?.resultat_copie_sftp || 'COPIE SFTP KO';
-        dateCopieSftp = logEntry?.date_copie_sftp || new Date().toISOString();
-      } catch (sftpError) {
-        logger.error({ sftpError }, `Erreur lors du transfert SFTP du fichier déjà présent ${cheminCible}`);
-        resultatCopieSftp = 'COPIE SFTP KO';
-        dateCopieSftp = new Date().toISOString();
-      }
-    } else if (params.transfertSftp) {
-        logger.warn('Transfert SFTP demandé mais aucun client SFTP n\'a été fourni.');
-        resultatCopieSftp = 'CLIENT SFTP MANQUANT';
-    }
-
     const urlObject = new URL(url);
     const sourceFileName = path.basename(urlObject.pathname);
     const sourceDir = path.dirname(urlObject.pathname);
@@ -92,8 +73,7 @@ export async function telechargerEtRenommerPdf(
       nom_specialite: nom_specialite,
       date_copie_rep_tempo: new Date().toISOString(),
       resultat_copie_rep_tempo: resultatCopieTempo,
-      date_copie_sftp: dateCopieSftp,
-      resultat_copie_sftp: resultatCopieSftp,
+      princeps_generique: princeps_generique,
     });
     return cheminCible;
   } catch (err) {
@@ -120,6 +100,7 @@ export async function telechargerEtRenommerPdf(
         nom_specialite: nom_specialite,
         date_copie_rep_tempo: new Date().toISOString(),
         resultat_copie_rep_tempo: 'EN_ATTENTE',
+        princeps_generique: princeps_generique,
       })
       .returning('id');
     logId = ids[0].id;
@@ -164,21 +145,7 @@ export async function telechargerEtRenommerPdf(
           logger.info(`PDF téléchargé et renommé : ${cheminCible}`);
           await db('liste_fichiers_copies').where({ id: logId }).update({ resultat_copie_rep_tempo: 'COPIE OK' });
 
-          if (params.transfertSftp && sftpClient) {
-            const remoteSubDir = path.posix.join(path.basename(path.dirname(params.repCiblePrincipal)), 'EU', 'RCP_Notices');
-            try {
-              await transferFichierSFTP(sftpClient, cheminCible, remoteSubDir, nouveauNom, idBatch, codeCIS, codeATC, db);
-            } catch (sftpError) {
-              logger.error({ sftpError }, `Erreur lors du transfert SFTP du fichier téléchargé ${cheminCible}`);
-              // Le statut est déjà mis à jour dans transferFichierSFTP en cas d'erreur
-            }
-          } else if (params.transfertSftp) {
-            logger.warn('Transfert SFTP demandé mais aucun client SFTP n\'a été fourni.');
-            await db('liste_fichiers_copies').where({ id: logId }).update({
-                date_copie_sftp: new Date().toISOString(),
-                resultat_copie_sftp: 'CLIENT SFTP MANQUANT'
-            });
-          }
+
           resolve();
         });
         writer.on('error', (err: Error) => {

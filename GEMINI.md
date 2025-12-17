@@ -53,17 +53,49 @@ Le code dans `export_europe_cleyrop.ts` utilise une boucle `for...of` qui traite
 *   **Idée :** Masquer l'identité du script en utilisant un en-tête `User-Agent` de navigateur web commun.
 *   **Implémentation :** Ajouter une option `headers: { 'User-Agent': '...' }` dans la configuration de la requête `axios`.
 
-## Modification de la gestion de la récupération des fichiers et transfert par SFTP
+## Fonctionnalité a ajouter : exports excel post-extraction des fichiers R, N et E
 
-   1. Remplacer `TYPE_TRANSFERT_SFTP` par deux nouvelles variables : TRANSFERT_SFTP_DECENTRALISE et TRANSFERT_SFTP_CENTRALISE.
-   2. Modifier la condition de démarrage pour que le script s'exécute si l'un des quatre indicateurs (TRAITEMENT... ou
-      TRANSFERT_SFTP...) est activé.
-   3. Adapter la fonction `processerDocumentsDecentralises` :
-       * Si TRAITEMENT_RCP_DECENTRALISE est True : copie locale puis transfert SFTP (si activé).
-       * Si seul TRANSFERT_SFTP_DECENTRALISE est True : le script recherchera les fichiers décentralisés du dernier traitement
-          et lancera uniquement leur transfert SFTP.
-   4. Adapter la fonction `processerDocumentsCentralises` :
-       * Si TRAITEMENT_RCP_CENTRALISE est True : téléchargement des PDF, génération de l'Excel, puis transfert SFTP de l'Excel
-          ET de tous les PDF (si activé).
-       * Si seul TRANSFERT_SFTP_CENTRALISE est True : le script recherchera les fichiers centralisés (Excel et PDF) du dernier
-          traitement et lancera uniquement leur transfert SFTP.
+dans la fonction main(), apres le commentaire "    // Exports Excel", il faut que tu ajoutes la création de deux fichiers excel a la racine du répertoire d'export (ex. /Extract_RCP_20251026/)
+
+Ces deux fichiers seront les suivants :
+
+1/ transfert_RcpNotice_cleyrop_AAAAMMJJ_HHMMSS.xlsx : (le nom doit etre construit avec la date et l'heure)
+
+il concerne l'idBatch en cours dans la table liste_fichiers_copies.
+
+Les colonnes qu'il doit contenir de cette table sont :
+
+- nom_fichier_cible
+- code_cis
+- code_atc
+- lib_atc
+- nom_specialite
+- princeps_generique
+- type_document (RCP, Notice ou RCP_Notice_EU)
+    - RCP si nom_fichier_cible commence par R
+    - Notice si nom_fichier_cible commence par N
+    - RCP_Notice_EU si nom_fichier_cible commence par E
+- repertoire d'export :
+    - \FR\RCP\ si nom_fichier_cible commence par R
+    - \FR\Notices\ si nom_fichier_cible commence par N
+    - \EU\RCP_Notices\ si nom_fichier_cible commence par E
+
+
+2/ transfert_RcpNotice_AAAAMMJJ_HHMMSS.xlsx : (le nom doit etre construit avec la date et l'heure)
+
+
+il concerne l'idBatch en cours dans la table liste_fichiers_copies.
+
+Le fichier Excel doit contenir toutes les colonnes de cette table avec en plus :
+
+- type_document (RCP, Notice ou RCP_Notice_EU)
+    - RCP si nom_fichier_cible commence par R
+    - Notice si nom_fichier_cible commence par N
+    - RCP_Notice_EU si nom_fichier_cible commence par E
+- repertoire d'export :
+    - \FR\RCP\ si nom_fichier_cible commence par R
+    - \FR\Notices\ si nom_fichier_cible commence par N
+    - \EU\RCP_Notices\ si nom_fichier_cible commence par E
+
+
+pour réaliser cet export tu peux t'inspirer et modifier les trois fichiers qui sont dans le répertoire /exportExcel/

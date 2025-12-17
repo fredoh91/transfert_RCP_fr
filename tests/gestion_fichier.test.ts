@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import fs from 'fs/promises';
 import path from 'path';
-import { copierFichierRCP } from '../src/gestion_fichiers';
+import { copierFichierRCP } from '../src/process/gestion_fichiers';
 
 
 const nomFichier = 'R0152687.htm';

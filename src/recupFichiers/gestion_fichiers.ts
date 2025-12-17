@@ -1,13 +1,18 @@
 import fs from "fs/promises";
 import path from "path";
-import { logger } from './logs_config.js';
+import { logger } from '../logs_config.js';
 
 let compteurCopies = 0;
 
+
 /**
+ * 
  * Copie un fichier RCP du dossier source vers le dossier cible, selon les variables d'environnement.
- * @param nomFichier Le nom du fichier à copier (ex: R0152678.htm)
- * @throws Erreur si la copie échoue ou si les variables d'environnement sont manquantes
+ * @param nomFichier  Le nom du fichier à copier (ex: R0152678.htm)
+ * @param codeCIS 
+ * @param codeATC 
+ * @param repCible 
+ * @returns 
  */
 export async function copierFichierRCP(
   nomFichier: string,
