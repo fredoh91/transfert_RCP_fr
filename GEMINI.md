@@ -53,6 +53,11 @@ Le code dans `export_europe_cleyrop.ts` utilise une boucle `for...of` qui traite
 *   **Idée :** Masquer l'identité du script en utilisant un en-tête `User-Agent` de navigateur web commun.
 *   **Implémentation :** Ajouter une option `headers: { 'User-Agent': '...' }` dans la configuration de la requête `axios`.
 
-## Fonctionnalité a ajouter : en cas de trop d'erreurs consecutives dans le telechargement EMA, on met en place une temporisation assez longue avant de reprendre
+## Fonctionnalité a ajouter : transfert SFTP
 
-j'ai une amelioration a te demander, je pense que c'est dans le fichier @src/recupFichiers/gestion_pdf_centralise.ts . Dans ce fichier on télécharge des fichiers PDF depuis le site de l'ema. Une strategie est déja en place en cas d'erreur de telechargement, mais au bout d'environ 1h30 de telechargement j'ai systematiquement des erreurs Request failed with status code 429 (Code: ERR_BAD_REQUEST, Status: 429). Je pense qu'une nouvelle amélioration a apporter serait, si par exemple les 15 dernieres tentatives (ce nombre est défini dans le fichier .env : DL_EMA_NB_ERROR_CONSECUTIVELY)  correspondant a ce type d'erreur, on fait une pause pendant un nombre de secondes definies dans la variable .env DL_EMA_DELAY_RECONNECT_IF_DL_ERROR  (300 secondes par exemple). Passé cette temporisation, on reprend le téléchargement au il s'etait arreté. Je ne  sais pas si il faut completement couper la connexion pour soulager le serveur ?   
+Le transfert SFTP est deja en parti realisé, il faudrait que tu valides, en lisant le code, pour que cela corresponde a ma demande.
+Il faut que tu mettes en place le transfert SFTP, dans la fonction main(), au niveau du commentaire "// --- Lancement des transferts SFTP si activés ---".
+Ce transfert doit donc s'effectuer apres la recuperation des fichiers Fr et Eu comme c'est actuellement le cas aujourd'hui.
+Comme cela est sans doute deja en place, les variables . env TRANSFERT_SFTP_DECENTRALISE=True et TRANSFERT_SFTP_CENTRALISE=True permettent de gérer si ce transfert doit avoir lieu ou pas.
+La logique de ce transfert a deja ete codé, tu dois donc utiliser les fichiers transfert/sftp.ts et transfert/sftp_transfert.ts pour mettre en place cette logique.
+Il faut egalement transferer le fichier transfert_RcpNotice_cleyrop_AAAAMMJJ_HHMMSS.xlsx le plus récent

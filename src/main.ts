@@ -19,10 +19,15 @@ import SftpClient from 'ssh2-sftp-client';
 
 import { processerDocumentsDecentralises } from './recupFichiers/decentralise.js';
 import { processerDocumentsCentralises } from './recupFichiers/centralise.js';
-import { transferSFTPDecentralises, transferSFTPCentralise } from './transfert/sftp.js';
+import { transferSFTPDecentralises, transferSFTPCentralise, transferExcelCleyrop } from './transfert/sftp.js';
 import { exportCleyropPostExtraction, exportFullPostExtraction } from './exportExcel/export_post_extraction.js';
 
 const db = knex(knexConfig.development);
+
+// --- Gestion de l'argument --batch ---
+const batchArgIndex = process.argv.indexOf('--batch');
+const providedBatchId = batchArgIndex > -1 ? process.argv[batchArgIndex + 1] : null;
+
 
 /**
  * Traite les documents décentralisés (RCP et Notices).
@@ -69,56 +74,72 @@ async function main() {
     process.exit(0);
   }
 
-  
   const poolCodexExtract = await createPoolCodexExtract();
   const repSource = process.env.REP_RCP_SOURCE;
   const baseRepCible = process.env.REP_RCP_CIBLE;
-  const now = new Date();
-  const pad = (n: number) => n.toString().padStart(2, '0');
-  const dateDirStr = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`;
-  const dateFileStr = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
-  const repCible = baseRepCible ? `${baseRepCible}/Extract_RCP_${dateDirStr}` : undefined;
+  
+  let idBatch: string;
+  let dateDirStr: string;
+  let dateFileStr: string;
+  let idBatchRowId: number | undefined;
+
+  if (providedBatchId) {
+    logger.warn(`--- MODE REPRISE ACTIF --- Utilisation du batch existant : ${providedBatchId}`);
+    idBatch = providedBatchId;
+    
+    // Valider que le batch existe en base
+    const batchRow = await db('liste_id_batch').where({ id_batch: idBatch }).first();
+    if (!batchRow) {
+      logger.error(`Le batch ID ${idBatch} n'a pas été trouvé dans la base de données. Arrêt.`);
+      process.exit(1);
+    }
+    idBatchRowId = batchRow.id;
+
+    // Déduire les chemins à partir de l'ID du batch
+    dateDirStr = idBatch.split('_')[0];
+    dateFileStr = idBatch;
+
+  } else {
+    logger.info('--- MODE NORMAL --- Création d\'un nouveau batch.');
+    const now = new Date();
+    const pad = (n: number) => n.toString().padStart(2, '0');
+    dateDirStr = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`;
+    dateFileStr = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+    idBatch = dateFileStr;
+
+    // Création de l'entrée en base uniquement en mode normal
+    const ids = await db('liste_id_batch')
+      .insert({
+        id_batch: idBatch,
+        debut_batch: new Date().toISOString()
+      })
+      .returning('id');
+    idBatchRowId = typeof ids[0] === 'object' ? ids[0].id : ids[0];
+  }
+
+
+  const repCible = baseRepCible ? path.join(baseRepCible, `Extract_RCP_${dateDirStr}`) : undefined;
 
   // Création des sous-répertoires FR et EU
   const repCibleFR = repCible ? path.join(repCible, 'FR') : undefined;
   const repCibleEU = repCible ? path.join(repCible, 'EU') : undefined;
-  const repCibleEURCPNotices = repCibleEU ? path.join(repCibleEU, 'RCP_Notices') : undefined; // Nouveau répertoire
+  const repCibleEURCPNotices = repCibleEU ? path.join(repCibleEU, 'RCP_Notices') : undefined;
   const repCibleRCP = repCibleFR ? path.join(repCibleFR, 'RCP') : undefined;
   const repCibleNotices = repCibleFR ? path.join(repCibleFR, 'Notices') : undefined;
 
-  if (repCible) {
+  if (repCible && !providedBatchId) { // On ne recrée les répertoires qu'en mode normal
     await fs.mkdir(repCible, { recursive: true });
     if (repCibleFR) await fs.mkdir(repCibleFR, { recursive: true });
-    if (repCibleEURCPNotices) await fs.mkdir(repCibleEURCPNotices, { recursive: true }); // Création du nouveau répertoire
+    if (repCibleEURCPNotices) await fs.mkdir(repCibleEURCPNotices, { recursive: true });
     if (repCibleEU) await fs.mkdir(repCibleEU, { recursive: true });
     if (repCibleRCP) await fs.mkdir(repCibleRCP, { recursive: true });
     if (repCibleNotices) await fs.mkdir(repCibleNotices, { recursive: true });
   }
 
-  const idBatch = 
-    now.getFullYear().toString() +
-    pad(now.getMonth() + 1) +
-    pad(now.getDate()) + '_' +
-    pad(now.getHours()) +
-    pad(now.getMinutes()) +
-    pad(now.getSeconds());
-
-  let idBatchRowId: number | undefined = undefined;
   let sftp: SftpClient | undefined = undefined;
 
   try {
-    const debutBatch = new Date();
-    await db('liste_id_batch')
-      .insert({
-        id_batch: idBatch,
-        debut_batch: new Date().toISOString()
-      })
-      .returning('id')
-      .then((ids) => {
-        idBatchRowId = typeof ids[0] === 'object' ? ids[0].id : ids[0];
-      });
-      
-      
+    // Le logging du début de batch est déjà fait ou récupéré
           
     // Récupération des fichiers Fr et EU en parallèle
     let decentralisePromise: Promise<any[]> = Promise.resolve([]);
@@ -164,56 +185,60 @@ async function main() {
       centralisePromise
     ]);
 
-    let allProcessedData: any[] = [];
-    let totalFilesProcessed = 0;
+    // Mettre à jour les statistiques uniquement si des traitements ont eu lieu
+    if (traitementRcpDecentralise || traitementRcpCentralise) {
+      let allProcessedData: any[] = [];
+      let totalFilesProcessed = 0;
 
-    if (results[0].status === 'fulfilled') {
-      allProcessedData = allProcessedData.concat(results[0].value);
-      totalFilesProcessed += results[0].value.length;
-    } else {
-      logger.error('Erreur lors du traitement décentralisé:', results[0].reason);
+      if (results[0].status === 'fulfilled') {
+        allProcessedData = allProcessedData.concat(results[0].value);
+        totalFilesProcessed += results[0].value.length;
+      } else {
+        logger.error('Erreur lors du traitement décentralisé:', results[0].reason);
+      }
+
+      if (results[1].status === 'fulfilled') {
+        allProcessedData = allProcessedData.concat(results[1].value);
+        totalFilesProcessed += results[1].value.length;
+      } else {
+        logger.error('Erreur lors du traitement centralisé:', results[1].reason);
+      }
+
+      const nomFichierCibles = allProcessedData.map((item: any) => item.nom_fichier_cible);
+      const countR = nomFichierCibles.filter((name: string) => name.startsWith('R')).length;
+      const countN = nomFichierCibles.filter((name: string) => name.startsWith('N')).length;
+      const countE = nomFichierCibles.filter((name: string) => name.startsWith('E')).length;
+
+      if (idBatchRowId !== undefined) {
+        await db('liste_id_batch')
+          .where({ id: idBatchRowId })
+          .update({ 
+            nb_fichiers_traites: totalFilesProcessed,
+            nb_fichiers_r: countR,
+            nb_fichiers_n: countN,
+            nb_fichiers_e: countE
+          });
+      }
+      console.log(`Total des fichiers traités : ${totalFilesProcessed}`);
     }
-
-    if (results[1].status === 'fulfilled') {
-      allProcessedData = allProcessedData.concat(results[1].value);
-      totalFilesProcessed += results[1].value.length;
-    } else {
-      logger.error('Erreur lors du traitement centralisé:', results[1].reason);
-    }
-
-    // statistiques du nombre de fichiers générés par type
-    const nomFichierCibles = allProcessedData.map((item: any) => item.nom_fichier_cible);
-
-    const countR = nomFichierCibles.filter((name: string) => name.startsWith('R')).length;
-    const countN = nomFichierCibles.filter((name: string) => name.startsWith('N')).length;
-    const countE = nomFichierCibles.filter((name: string) => name.startsWith('E')).length;
-
-    // Mettre à jour le nombre de fichiers dans le batch
-    if ((traitementRcpDecentralise || traitementRcpCentralise) && idBatchRowId !== undefined) {
-      await db('liste_id_batch')
-        .where({ id: idBatchRowId })
-        .update({ 
-          nb_fichiers_traites: totalFilesProcessed,
-          nb_fichiers_r: countR,
-          nb_fichiers_n: countN,
-          nb_fichiers_e: countE
-        });
-    }
-    console.log(`Total des fichiers traités : ${totalFilesProcessed}`);
-
-
-
-
 
     // Exports Excel
-    if (repCible) {
+    // On les exécute uniquement si les traitements locaux étaient actifs
+    let cleyropExcelPath: string | null = null;
+    if (repCible && (traitementRcpDecentralise || traitementRcpCentralise)) {
       logger.info('Lancement des exports Excel post-extraction...');
-      await exportCleyropPostExtraction(db, idBatch, repCible, dateFileStr);
+      cleyropExcelPath = await exportCleyropPostExtraction(db, idBatch, repCible, dateFileStr);
       await exportFullPostExtraction(db, idBatch, repCible, dateFileStr);
       logger.info('Exports Excel post-extraction terminés.');
+    } else if (repCible) {
+      // En mode reprise, on essaie de retrouver le chemin du fichier Cleyrop
+      const cleyropFileName = `transfert_RcpNotice_cleyrop_${dateFileStr}.xlsx`;
+      const potentialPath = path.join(repCible, cleyropFileName);
+      if(fsSync.existsSync(potentialPath)) {
+        cleyropExcelPath = potentialPath;
+        logger.info(`Fichier Cleyrop existant trouvé en mode reprise : ${cleyropExcelPath}`);
+      }
     }
-
-
 
     // --- Lancement des transferts SFTP si activés ---
     if (transfertSftpDecentralise || transfertSftpCentralise) {
@@ -249,13 +274,18 @@ async function main() {
       // @ts-ignore - La propriété 'client' existe sur l'instance mais n'est pas dans les types
       sftp.client.setMaxListeners(maxConcurrency + 5); // Ajout d'un tampon de sécurité
 
-      // Lancer les transferts SFTP dédiés
-        if (transfertSftpDecentralise) {
-          await transferSFTPDecentralises({ sftp, idBatch, db, repCible, repCibleFR });
-        }
-        if (transfertSftpCentralise) {
-          await transferSFTPCentralise({ sftp, idBatch, db, repCible, repCibleEU });
-        }
+      // Transfert du fichier Excel Cleyrop s'il a été généré
+      if (cleyropExcelPath && repCible) {
+        await transferExcelCleyrop(sftp, cleyropExcelPath, repCible);
+      }
+
+      // Lancer les transferts SFTP dédiés (pilotés par la base de données)
+      if (transfertSftpDecentralise) {
+        await transferSFTPDecentralises({ sftp, idBatch, db, repCible, repCibleFR });
+      }
+      if (transfertSftpCentralise) {
+        await transferSFTPCentralise({ sftp, idBatch, db, repCible, repCibleEU });
+      }
     }
 
 

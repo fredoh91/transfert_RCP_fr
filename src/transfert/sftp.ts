@@ -4,9 +4,15 @@ import fsSync from 'fs';
 import { logger } from '../logs_config.js';
 import knex from 'knex';
 import { transferFichierSFTP } from './sftp_transfert.js';
+import SftpClient from 'ssh2-sftp-client';
 
+/**
+ * 
+ * @param params 
+ * @returns 
+ */
 export async function transferSFTPDecentralises(params: {
-  sftp: any,
+  sftp: SftpClient,
   idBatch: string,
   db: knex.Knex,
   repCible?: string,
@@ -49,8 +55,13 @@ export async function transferSFTPDecentralises(params: {
   logger.info('Fin du transfert SFTP pour les documents décentralisés (FR).');
 }
 
+/**
+ * 
+ * @param params 
+ * @returns 
+ */
 export async function transferSFTPCentralise(params: {
-  sftp: any,
+  sftp: SftpClient,
   idBatch: string,
   db: knex.Knex,
   repCible?: string,
@@ -98,4 +109,50 @@ export async function transferSFTPCentralise(params: {
   }));
   await Promise.allSettled(sftpPromises);
   logger.info('Fin du transfert SFTP pour les documents centralisés (EU).');
+}
+
+/**
+ * Transfère le fichier Excel Cleyrop via SFTP.
+ * Ne logue pas en base de données.
+ * @param sftp - Le client SFTP connecté.
+ * @param localFilePath - Le chemin complet du fichier Excel local à transférer.
+ * @param repCible - Le répertoire de base de l'extraction (ex: .../Extract_RCP_20251026).
+ */
+export async function transferExcelCleyrop(
+  sftp: SftpClient,
+  localFilePath: string,
+  repCible: string,
+) {
+  if (!process.env.SFTP_REMOTE_BASE_DIR) {
+    logger.error('[SFTP Cleyrop] Variable SFTP_REMOTE_BASE_DIR manquante. Transfert annulé.');
+    return;
+  }
+  if (!fsSync.existsSync(localFilePath)) {
+    logger.error(`[SFTP Cleyrop] Fichier local non trouvé, impossible de le transférer : ${localFilePath}`);
+    return;
+  }
+
+  const remoteFileName = path.basename(localFilePath);
+  // Le répertoire distant est la base SFTP + le nom du répertoire d'extraction du jour.
+  const remoteDir = path.posix.join(process.env.SFTP_REMOTE_BASE_DIR, path.basename(repCible));
+  const remoteFilePath = path.posix.join(remoteDir, remoteFileName);
+
+  logger.info(`[SFTP Cleyrop] Début du transfert du fichier Excel Cleyrop vers ${remoteFilePath}`);
+
+  try {
+    await sftp.mkdir(remoteDir, true);
+    await sftp.fastPut(localFilePath, remoteFilePath);
+    
+    // Vérification simple par la taille
+    const remoteStats = await sftp.stat(remoteFilePath);
+    const localStats = fsSync.statSync(localFilePath);
+
+    if (localStats.size === remoteStats.size) {
+      logger.info(`[SFTP Cleyrop] ✅ Transfert du fichier Excel Cleyrop réussi.`);
+    } else {
+      logger.error(`[SFTP Cleyrop] ❌ Tailles différentes pour ${remoteFilePath}: local=${localStats.size}, distant=${remoteStats.size}`);
+    }
+  } catch (err) {
+    logger.error({ err }, `[SFTP Cleyrop] ❌ Erreur lors du transfert du fichier Excel.`);
+  }
 }
