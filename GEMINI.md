@@ -53,49 +53,6 @@ Le code dans `export_europe_cleyrop.ts` utilise une boucle `for...of` qui traite
 *   **Idée :** Masquer l'identité du script en utilisant un en-tête `User-Agent` de navigateur web commun.
 *   **Implémentation :** Ajouter une option `headers: { 'User-Agent': '...' }` dans la configuration de la requête `axios`.
 
-## Fonctionnalité a ajouter : exports excel post-extraction des fichiers R, N et E
+## Fonctionnalité a ajouter : en cas de trop d'erreurs consecutives dans le telechargement EMA, on met en place une temporisation assez longue avant de reprendre
 
-dans la fonction main(), apres le commentaire "    // Exports Excel", il faut que tu ajoutes la création de deux fichiers excel a la racine du répertoire d'export (ex. /Extract_RCP_20251026/)
-
-Ces deux fichiers seront les suivants :
-
-1/ transfert_RcpNotice_cleyrop_AAAAMMJJ_HHMMSS.xlsx : (le nom doit etre construit avec la date et l'heure)
-
-il concerne l'idBatch en cours dans la table liste_fichiers_copies.
-
-Les colonnes qu'il doit contenir de cette table sont :
-
-- nom_fichier_cible
-- code_cis
-- code_atc
-- lib_atc
-- nom_specialite
-- princeps_generique
-- type_document (RCP, Notice ou RCP_Notice_EU)
-    - RCP si nom_fichier_cible commence par R
-    - Notice si nom_fichier_cible commence par N
-    - RCP_Notice_EU si nom_fichier_cible commence par E
-- repertoire d'export :
-    - \FR\RCP\ si nom_fichier_cible commence par R
-    - \FR\Notices\ si nom_fichier_cible commence par N
-    - \EU\RCP_Notices\ si nom_fichier_cible commence par E
-
-
-2/ transfert_RcpNotice_AAAAMMJJ_HHMMSS.xlsx : (le nom doit etre construit avec la date et l'heure)
-
-
-il concerne l'idBatch en cours dans la table liste_fichiers_copies.
-
-Le fichier Excel doit contenir toutes les colonnes de cette table avec en plus :
-
-- type_document (RCP, Notice ou RCP_Notice_EU)
-    - RCP si nom_fichier_cible commence par R
-    - Notice si nom_fichier_cible commence par N
-    - RCP_Notice_EU si nom_fichier_cible commence par E
-- repertoire d'export :
-    - \FR\RCP\ si nom_fichier_cible commence par R
-    - \FR\Notices\ si nom_fichier_cible commence par N
-    - \EU\RCP_Notices\ si nom_fichier_cible commence par E
-
-
-pour réaliser cet export tu peux t'inspirer et modifier les trois fichiers qui sont dans le répertoire /exportExcel/
+j'ai une amelioration a te demander, je pense que c'est dans le fichier @src/recupFichiers/gestion_pdf_centralise.ts . Dans ce fichier on télécharge des fichiers PDF depuis le site de l'ema. Une strategie est déja en place en cas d'erreur de telechargement, mais au bout d'environ 1h30 de telechargement j'ai systematiquement des erreurs Request failed with status code 429 (Code: ERR_BAD_REQUEST, Status: 429). Je pense qu'une nouvelle amélioration a apporter serait, si par exemple les 15 dernieres tentatives (ce nombre est défini dans le fichier .env : DL_EMA_NB_ERROR_CONSECUTIVELY)  correspondant a ce type d'erreur, on fait une pause pendant un nombre de secondes definies dans la variable .env DL_EMA_DELAY_RECONNECT_IF_DL_ERROR  (300 secondes par exemple). Passé cette temporisation, on reprend le téléchargement au il s'etait arreté. Je ne  sais pas si il faut completement couper la connexion pour soulager le serveur ?   

@@ -131,7 +131,7 @@ export async function getDonneesEuropeCleyrop({
   repCibleEURCPNotices: string,
   db: Knex,
   idBatch: string,
-  repCiblePrincipal: string // Nouveau paramètre obligatoire
+  repCiblePrincipal: string 
 }): Promise<{ data: any[]; fileCount: number }> {
   // Trouver le fichier CSV du mois courant uniquement
   const now = new Date();

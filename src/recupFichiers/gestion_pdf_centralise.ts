@@ -5,12 +5,18 @@ import https from 'https';
 import axios from 'axios';
 import { logger } from '../logs_config.js';
 import { Knex } from 'knex';
-import { transferFichierSFTP } from '../transfert/sftp_transfert.js';
+// import { transferFichierSFTP } from '../transfert/sftp_transfert.js';
 
 import SftpClient from 'ssh2-sftp-client';
 
 // Agent HTTPS pour la réutilisation des connexions (Keep-Alive)
 const httpsAgent = new https.Agent({ keepAlive: true });
+
+// --- Stratégie de pause pour erreurs 429 ---
+let consecutive429Errors = 0;
+let isPauseActive = false; // Verrou pour éviter les pauses multiples
+const errorThreshold = parseInt(process.env.DL_EMA_NB_ERROR_CONSECUTIVELY || '15', 10);
+const pauseDuration = parseInt(process.env.DL_EMA_DELAY_RECONNECT_IF_DL_ERROR || '300', 10) * 1000; // en millisecondes
 
 async function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -128,6 +134,9 @@ export async function telechargerEtRenommerPdf(
         },
         httpsAgent: httpsAgent
       });
+      
+      // En cas de succès, on réinitialise le compteur d'erreurs 429
+      consecutive429Errors = 0;
 
       const contentType = response.headers['content-type'];
       if (!contentType || !contentType.includes('application/pdf')) {
@@ -144,8 +153,6 @@ export async function telechargerEtRenommerPdf(
         writer.on('finish', async () => {
           logger.info(`PDF téléchargé et renommé : ${cheminCible}`);
           await db('liste_fichiers_copies').where({ id: logId }).update({ resultat_copie_rep_tempo: 'COPIE OK' });
-
-
           resolve();
         });
         writer.on('error', (err: Error) => {
@@ -160,8 +167,38 @@ export async function telechargerEtRenommerPdf(
       if (axios.isAxiosError(error)) {
         errorMsg = `Code: ${error.code}, Status: ${error.response?.status}`;
         logger.error(`Erreur Axios lors du téléchargement de ${url}: ${error.message} (${errorMsg})`);
+        
+        // Gestion spécifique des erreurs 429
+        if (error.response?.status === 429) {
+          consecutive429Errors++;
+          logger.warn(`Erreur 429 détectée. Compteur d'erreurs consécutives : ${consecutive429Errors}/${errorThreshold}`);
+
+          // Si le seuil est atteint et que personne n'a déjà déclenché la pause...
+          if (consecutive429Errors >= errorThreshold && !isPauseActive) {
+            isPauseActive = true; // On active le verrou
+            logger.warn(`Seuil de ${errorThreshold} erreurs 429 atteint. Mise en pause globale du script pour ${pauseDuration / 1000} secondes.`);
+            await sleep(pauseDuration);
+            consecutive429Errors = 0; // Réinitialisation pour tout le monde
+            isPauseActive = false; // On retire le verrou
+            logger.info("Reprise du script après la pause.");
+          } 
+          // Si une pause est déjà en cours, on attend qu'elle se termine.
+          else if (isPauseActive) {
+            logger.warn("Une pause est déjà en cours. Mise en attente de ce processus...");
+            while (isPauseActive) {
+              await sleep(1000); // Attendre passivement la fin de la pause
+            }
+            logger.info("Fin de la pause détectée. Reprise de l'opération.");
+          }
+        } else {
+          // Une erreur différente réinitialise le compteur
+          consecutive429Errors = 0;
+        }
+
       } else {
         logger.error(`Erreur inattendue lors du téléchargement de ${url}:`, error);
+        // Une erreur non-Axios réinitialise aussi le compteur
+        consecutive429Errors = 0;
       }
 
       await db('liste_fichiers_copies').where({ id: logId }).update({ resultat_copie_rep_tempo: errorMsg });
