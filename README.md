@@ -21,12 +21,19 @@ Ce guide explique comment générer une **paire de clés SSH dédiée** à ce pr
 Exécutez la commande suivante :
 
 ```sh
-ssh-keygen -t rsa -b 4096 -C "transfert_rcp_fr"
+ssh-keygen -t rsa -b 4096 -C "transfert_rcp_notice_fr"
+ssh-keygen -t rsa -b 4096 -C "transfert_rcp_notice_fr" -f $HOME\.ssh\id_rsa_transfert_rcp_fr
 ```
 
 - `-t rsa` : type de clé RSA (classique, compatible partout).
 - `-b 4096` : longueur de la clé (4096 bits, recommandé).
 - `-C "transfert_rcp_fr"` : commentaire pour identifier la clé.
+
+Création du couple clef publique/privée pour le transfert SFTP via la machine "Chipeur"
+
+```sh
+ssh-keygen -t rsa -b 4096 -C "transfert_Cleyrop_Chipeur" -f $HOME\.ssh\transfert_Cleyrop_Chipeur
+```
 
 **Quand il demande le chemin du fichier** :
 - Par défaut, il propose `D:/Users/<votre_user>/.ssh/id_rsa`
@@ -147,3 +154,41 @@ npm run rattrapage_rcp_eu
 | `TEMPO_AVANT_RELANCE_RATTRPAGE_EU` | Temps d'attente en secondes entre deux cycles de relance automatique. | `30` |
 | `DL_EMA_RETRY_COUNT` | Nombre de tentatives pour chaque fichier lors d'un cycle de rattrapage. | `3` |
 
+
+## 3.3 Lancement du script pour extraction des fichiers Eu et Fr sans upload SFTP
+
+les paramètres dans le fichiers .env doivent etre les suivants :
+
+# --- ÉTAPE 1 : TRAITEMENT LOCAL UNIQUEMENT ---
+TRAITEMENT_RCP_DECENTRALISE=True
+TRAITEMENT_RCP=True
+TRAITEMENT_NOTICE=True
+TRAITEMENT_RCP_CENTRALISE=True
+TRANSFERT_SFTP_DECENTRALISE=False
+TRANSFERT_SFTP_CENTRALISE=False
+
+puis :
+
+```sh
+npm run start
+```
+
+## 3.4 Lancement du script d'upload SFTP de fichiers précédemment extraits
+
+les paramètres dans le fichiers .env doivent etre les suivants :
+
+# --- ÉTAPE 2 : TRANSFERT SFTP UNIQUEMENT ---
+TRAITEMENT_RCP_DECENTRALISE=False
+TRAITEMENT_RCP=False
+TRAITEMENT_NOTICE=False
+TRAITEMENT_RCP_CENTRALISE=False
+TRANSFERT_SFTP_DECENTRALISE=True
+TRANSFERT_SFTP_CENTRALISE=True
+
+recupérer dans la table liste_id_batch, un id_batch (ex. 20251219_071507) correspondant a une extraction complete réussie (RCPs, notices et fichier Excel Cleyrop)
+
+puis :
+
+```sh
+node dist/main.js --batch 20251219_071507
+```

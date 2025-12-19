@@ -20,6 +20,7 @@ export async function createPoolCodexExtract(): Promise<mysql.Pool> {
             logger.info('Pool de connexions Codex Extract cree avec succes');
             // Ajout d'un test de connexion pour échouer rapidement si les identifiants sont mauvais
             const connection = await poolCodexExtract.getConnection();
+            
             await connection.ping();
             connection.release();
             logger.info('Connexion à la base de données Codex Extract réussie.');

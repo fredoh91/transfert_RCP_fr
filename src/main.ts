@@ -25,10 +25,14 @@ import { exportCleyropPostExtraction, exportFullPostExtraction } from './exportE
 const db = knex(knexConfig.development);
 
 // --- Gestion de l'argument --batch ---
+// console.log('Arguments reçus :', process.argv);
 const batchArgIndex = process.argv.indexOf('--batch');
 const providedBatchId = batchArgIndex > -1 ? process.argv[batchArgIndex + 1] : null;
 
+// console.log('batchArgIndex : ',batchArgIndex)
+// console.log('providedBatchId : ',providedBatchId)
 
+// process.exit();
 /**
  * Traite les documents décentralisés (RCP et Notices).
  * Récupère la liste des documents, les copie localement, les transfère par SFTP et loggue les opérations.
@@ -78,6 +82,9 @@ async function main() {
   const repSource = process.env.REP_RCP_SOURCE;
   const baseRepCible = process.env.REP_RCP_CIBLE;
   
+// console.log('repSource : ',repSource);
+// console.log('providedBatchId : ',providedBatchId);
+
   let idBatch: string;
   let dateDirStr: string;
   let dateFileStr: string;
@@ -90,8 +97,7 @@ async function main() {
     // Valider que le batch existe en base
     const batchRow = await db('liste_id_batch').where({ id_batch: idBatch }).first();
     if (!batchRow) {
-      logger.error(`Le batch ID ${idBatch} n'a pas été trouvé dans la base de données. Arrêt.`);
-      process.exit(1);
+      throw new Error(`Le batch ID ${idBatch} n'a pas été trouvé dans la base de données. Arrêt.`);
     }
     idBatchRowId = batchRow.id;
 
@@ -117,6 +123,7 @@ async function main() {
     idBatchRowId = typeof ids[0] === 'object' ? ids[0].id : ids[0];
   }
 
+    logger.info('idBatch : ',idBatch);
 
   const repCible = baseRepCible ? path.join(baseRepCible, `Extract_RCP_${dateDirStr}`) : undefined;
 
@@ -161,6 +168,7 @@ async function main() {
         maxFilesToProcess,
       });
     } else {
+      decentralisePromise = Promise.resolve([]);
       logger.info('Traitement décentralisé désactivé.');
     }
 
@@ -177,6 +185,7 @@ async function main() {
         maxFilesToProcess,
       });
     } else {
+      centralisePromise = Promise.resolve([]);
       logger.info('Traitement centralisé désactivé.');
     }
 
@@ -243,7 +252,6 @@ async function main() {
     // --- Lancement des transferts SFTP si activés ---
     if (transfertSftpDecentralise || transfertSftpCentralise) {
       // Initialiser et connecter le client SFTP
-      
       sftp = new SftpClient();
       const SFTP_HOST = process.env.SFTP_HOST;
       const SFTP_PORT = process.env.SFTP_PORT ? parseInt(process.env.SFTP_PORT) : 22;
@@ -255,7 +263,10 @@ async function main() {
         throw new Error('Paramètres SFTP manquants dans le .env');
       }
       const privateKey = fsSync.readFileSync(SFTP_PRIVATE_KEY_PATH as string);
+
+      
       logger.info(`Tentative de connexion SFTP à ${SFTP_HOST}:${SFTP_PORT} avec l'utilisateur ${SFTP_USER}`);
+
       await sftp.connect({
         host: SFTP_HOST as string,
         port: SFTP_PORT,
@@ -292,7 +303,7 @@ async function main() {
 
   } catch (error) {
     logger.error({ err: error }, 'Erreur lors du traitement');
-    process.exit(1);
+    process.exitCode = 1;
   } finally {
     if (idBatchRowId !== undefined) {
       const finBatch = new Date();
