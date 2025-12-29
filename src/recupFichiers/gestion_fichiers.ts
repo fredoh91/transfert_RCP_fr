@@ -63,7 +63,8 @@ export async function copierFichierRCP(
   await fs.copyFile(cheminSource, cheminCible);
   compteurCopies++;
   if (compteurCopies % 100 === 0) {
-    console.log(`✅ ${compteurCopies} fichiers copiés : ${nouveauNom}`);
+    const dateHeure = new Date().toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    console.log(`✅ ${dateHeure} ${compteurCopies} fichiers copiés : ${nouveauNom}`);
     logger.info(`✅ ${compteurCopies} fichiers copiés : ${nouveauNom}`);
   }
   return { statut: "FICHIER_COPIE", nouveauNom };

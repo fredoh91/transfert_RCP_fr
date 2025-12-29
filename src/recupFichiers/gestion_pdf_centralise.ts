@@ -150,12 +150,23 @@ export async function telechargerEtRenommerPdf(
       response.data.pipe(writer);
 
       await new Promise<void>((resolve, reject) => {
+        // Sécurité : Timeout pour éviter le blocage infini si le flux se fige
+        const timeoutSecu = setTimeout(() => {
+          writer.destroy(); // Force la fermeture du fichier local
+          if (response.data && typeof response.data.destroy === 'function') {
+            response.data.destroy(); // Force la fermeture du flux réseau
+          }
+          reject(new Error('TIMEOUT_STREAM: Le téléchargement a pris trop de temps (> 60s) ou le flux est bloqué.'));
+        }, 60000); // 60 secondes max
+
         writer.on('finish', async () => {
+          clearTimeout(timeoutSecu);
           logger.info(`PDF téléchargé et renommé : ${cheminCible}`);
           await db('liste_fichiers_copies').where({ id: logId }).update({ resultat_copie_rep_tempo: 'COPIE OK' });
           resolve();
         });
         writer.on('error', (err: Error) => {
+          clearTimeout(timeoutSecu);
           logger.error(`Erreur lors de l'écriture du fichier PDF ${cheminCible}:`, err);
           reject(err);
         });
@@ -176,17 +187,26 @@ export async function telechargerEtRenommerPdf(
           // Si le seuil est atteint et que personne n'a déjà déclenché la pause...
           if (consecutive429Errors >= errorThreshold && !isPauseActive) {
             isPauseActive = true; // On active le verrou
-            logger.warn(`Seuil de ${errorThreshold} erreurs 429 atteint. Mise en pause globale du script pour ${pauseDuration / 1000} secondes.`);
-            await sleep(pauseDuration);
-            consecutive429Errors = 0; // Réinitialisation pour tout le monde
-            isPauseActive = false; // On retire le verrou
-            logger.info("Reprise du script après la pause.");
+            try {
+              logger.warn(`Seuil de ${errorThreshold} erreurs 429 atteint. Mise en pause globale du script pour ${pauseDuration / 1000} secondes.`);
+              await sleep(pauseDuration);
+            } finally {
+              consecutive429Errors = 0; // Réinitialisation
+              isPauseActive = false; // On retire TOUJOURS le verrou
+              logger.info("Reprise du script après la pause.");
+            }
           } 
           // Si une pause est déjà en cours, on attend qu'elle se termine.
           else if (isPauseActive) {
             logger.warn("Une pause est déjà en cours. Mise en attente de ce processus...");
+            const waitStart = Date.now();
             while (isPauseActive) {
-              await sleep(1000); // Attendre passivement la fin de la pause
+              await sleep(1000); // Attendre passivement
+              // Sécurité : si au bout de (pause + 1 min) c'est toujours bloqué, on force la sortie
+              if (Date.now() - waitStart > pauseDuration + 60000) {
+                logger.error("Sécurité : Attente de pause trop longue, force la reprise.");
+                break;
+              }
             }
             logger.info("Fin de la pause détectée. Reprise de l'opération.");
           }
